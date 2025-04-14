@@ -1,3 +1,5 @@
 python-telegram-bot
 flask
 telethon
+pymongo
+python-dotenv
