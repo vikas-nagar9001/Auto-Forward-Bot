@@ -1,68 +1,86 @@
-"""
 # Auto Message Forwarder Bot
 
-A Telegram bot that allows users to automatically forward messages to multiple groups at specified intervals.
+A Telegram bot that automates message forwarding to multiple groups with customizable intervals, interactive UI, and comprehensive management features.
 
-## Features
+## Key Features
 
-- Multi-user support with individual configurations
-- User registration with Session String
-- Add and manage multiple destination groups
-- Customizable forwarding intervals for each group
-- Simple command interface
-- MongoDB integration for persistent storage
+- 🔄 Automated message forwarding with customizable intervals
+- 👥 Multi-user support with individual configurations
+- 🔐 Secure user authentication using Telethon session strings
+- 📱 Interactive button-based interface for easy navigation
+- ⚡ Real-time status monitoring and statistics
+- ⏱️ Individual interval settings per group
+- 📊 Detailed forwarding statistics and tracking
+- 🛠️ Advanced group management features
+- 💾 MongoDB integration for persistent storage
 
-## Commands
+## Commands and Features
 
-- `/start` - welcome message and about the bot or how to use the bot
-- `/help` - Show available commands
-- `/register <session_string>` - Register your Telegram account
-- `/addgroup <group_id> <interval_minutes>` - Add a group to forward messages to
-- `/removegroup <group_id>` - Remove a group
-- `/setinterval <minutes> <group_id>` - Set forwarding interval for a group
-- `/fwd <optional_interval_minutes>` - Forward a message (reply to a message)
-- `/stopfwd` - Stop forwarding messages
-- `/status` - Check forwarding status
-- `/mygroups` - List your configured groups
-- `/myaccount` - View your account information
-- `/unregister` - Unregister your account
 
-## Setup
+## Interactive Features
+
+- 📋 Message selection interface
+- 👥 Group selection with checkboxes
+- ⏱️ Preset and custom intervals
+- 📊 Real-time status updates
+- 🔍 Detailed statistics view
+- ⚡ Quick action shortcuts
+
+## Setup Instructions
 
 ### Prerequisites
-
-- Python 3.7+
+- Python 3.7 or higher
 - MongoDB database
 - Telegram API credentials
 
 ### Environment Variables
+```
+API_ID - Telegram API ID
+API_HASH - Telegram API Hash
+BOT_TOKEN - Telegram Bot Token
+MONGO_URI - MongoDB Connection URI
+PORT - Web Server Port (default: 8080)
+```
 
-- `API_ID` - Telegram api id (provided by Telegram)
-- `API_HASH` - Telegram api Hash (provided by Telegram)
-- `BOT_TOKEN` - Telegram bot token (provided by BotFather)
-- `MONGO_URI` - MongoDB connection string
-- `PORT` - Port for the Flask web server (optional, defaults to 8080)
-
-### Installation
-
+### Installation Steps
 1. Clone the repository
-2. Install dependencies: `pip install -r requirements.txt`
-3. Set up environment variables
-4. Run the bot: `python main.py`
+2. Install dependencies:
+   ```bash
+   pip install -r requirements.txt
+   ```
+3. Configure environment variables
+4. Run the bot:
+   ```bash
+   python main.py
+   ```
 
 ## Getting Started
 
-1. Start a chat with the bot.
-2. Register your Telegram account using the `/register <session_string>` command.
-3. Add groups using the `/addgroup` command.
-4. Reply to a message with `/fwd` to start forwarding.
+1. Start a chat with the bot
+2. Use `/register` and follow the interactive process
+3. Add groups using `/addgroup` or the quick menu
+4. Reply to any message with `/fwd` to start forwarding
 
-## How to Get Your Telegram API Credentials
+## Security Features
 
-1. Visit [https://my.telegram.org/auth](https://my.telegram.org/auth) and log in.
-2. Go to "API development tools".
-3. Create a new application.
-4. Note your API ID and API Hash.
-5. Use a session string generator to create your session string.
+- 🔐 Secure session-based authentication
+- 🛡️ Permission validation for groups
+- ✅ Input validation and error handling
+- 🔒 Safe data storage practices
+
+## Error Handling
+
+The bot includes comprehensive error handling for:
+- Invalid session strings
+- Group permission issues
+- Network connectivity problems
+- Rate limiting and API restrictions
+- Database connection issues
+
+## Contributing
+
+Contributions are welcome! Please feel free to submit pull requests.
+
 ## License
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+
+This project is licensed under the MIT License. See the [LICENSE](LICENSE) file for details.
