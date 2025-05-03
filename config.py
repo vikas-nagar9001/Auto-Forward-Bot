@@ -31,7 +31,10 @@ class Config:
     HOST = "0.0.0.0"
 
     # Admin Config (Optional)
-    ADMIN_ID = None  # Add your ADMIN_ID here if not using env var
+    ADMIN_ID = 6080217547  # Add your ADMIN_ID here if not using env var
+
+
+
 
 # Load environment variables if they exist, otherwise use manual config
 class EnvConfig(Config):
