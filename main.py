@@ -1,13 +1,12 @@
 from flask import Flask
 from threading import Thread
 import asyncio
-import os
 import logging
-from dotenv import load_dotenv
 from telethon import TelegramClient
 from pymongo import MongoClient
 
-# Import handlers
+# Import config and handlers
+import config
 from handlers.account_handler import AccountHandler
 from handlers.group_handler import GroupHandler
 from handlers.forward_handler import ForwardHandler
@@ -15,14 +14,6 @@ from handlers.status_handler import StatusHandler
 from handlers.help_handler import HelpHandler
 from handlers.keyboard_handler import KeyboardHandler
 
-# Load environment variables
-load_dotenv()
-
-# Configure logging
-logging.basicConfig(
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    level=logging.INFO
-)
 logger = logging.getLogger(__name__)
 
 # Flask app for keeping the bot alive
@@ -32,30 +23,23 @@ app = Flask(__name__)
 def home():
     return 'Auto Message Forwarder Bot is running!'
 
-# Environment variables
-API_ID = os.getenv('API_ID')
-API_HASH = os.getenv('API_HASH')
-BOT_TOKEN = os.getenv('BOT_TOKEN')
-MONGO_URI = os.getenv('MONGO_URI')
-
-# Check if environment variables are set
-if not all([API_ID, API_HASH, BOT_TOKEN, MONGO_URI]):
-    logger.error("Environment variables not set. Please set API_ID, API_HASH, BOT_TOKEN, and MONGO_URI.")
+# Check configuration
+if not config.validate_config():
     exit(1)
 
 # MongoDB setup
 try:
-    client = MongoClient(MONGO_URI)
-    db = client['auto_forward_bot']
-    users_collection = db['users']
-    groups_collection = db['groups']
+    client = MongoClient(config.MONGO_URI)
+    db = client[config.DB_NAME]
+    users_collection = db[config.USERS_COLLECTION]
+    groups_collection = db[config.GROUPS_COLLECTION]
     logger.info("Connected to MongoDB successfully")
 except Exception as e:
     logger.error(f"Failed to connect to MongoDB: {e}")
     exit(1)
 
 # Bot client
-bot = TelegramClient('bot', int(API_ID), API_HASH)
+bot = TelegramClient('bot', int(config.API_ID), config.API_HASH)
 
 # Dictionary to store user clients
 user_clients = {}
@@ -65,7 +49,7 @@ async def init_handlers():
     try:
         # Create handler instances
         forward_handler = ForwardHandler(bot, users_collection, groups_collection, user_clients)
-        account_handler = AccountHandler(bot, users_collection, groups_collection, user_clients, int(API_ID), API_HASH)
+        account_handler = AccountHandler(bot, users_collection, groups_collection, user_clients, int(config.API_ID), config.API_HASH)
         group_handler = GroupHandler(bot, users_collection, groups_collection, user_clients)
         status_handler = StatusHandler(bot, users_collection, groups_collection, forward_handler)
         help_handler = HelpHandler(bot, users_collection, groups_collection)
@@ -97,7 +81,7 @@ async def bot_main():
     """Main function for the bot"""
     try:
         # Start the bot
-        await bot.start(bot_token=BOT_TOKEN)
+        await bot.start(bot_token=config.BOT_TOKEN)
         logger.info("Bot started successfully")
 
         # Create indexes for better performance
@@ -108,11 +92,10 @@ async def bot_main():
         await init_handlers()
         
         # Send startup notification to admin if configured
-        admin_id = os.getenv('ADMIN_ID')
-        if admin_id:
+        if config.ADMIN_ID:
             try:
                 await bot.send_message(
-                    int(admin_id),
+                    int(config.ADMIN_ID),
                     "✅ Bot has started successfully!\n\n"
                     "System Info:\n"
                     f"• MongoDB Connected: ✅\n"
@@ -131,7 +114,7 @@ async def bot_main():
 
 def run_flask():
     """Run the Flask app in a separate thread"""
-    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 8080)))
+    app.run(host=config.HOST, port=config.PORT)
 
 def main():
     """Main entry point"""
