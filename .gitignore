@@ -1,4 +1,6 @@
-.env
 /__pycache__
 /handlers/__pycache__
 .env
+bot.session
+*.pyc
+
