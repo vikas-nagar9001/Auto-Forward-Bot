@@ -40,6 +40,15 @@ API_HASH - Telegram API Hash
 BOT_TOKEN - Telegram Bot Token
 MONGO_URI - MongoDB Connection URI
 PORT - Web Server Port (default: 8080)
+
+# Admin Config (Optional)
+ADMIN_ID = 11223455  # Add your ADMIN_ID here if not using env var
+
+Bot Startup Notifications: When the bot starts up, if ADMIN_ID is configured, it sends a detailed status notification to that user with information about:
+MongoDB connection status
+Handler initialization status
+Web server status
+Overall bot readiness
 ```
 
 ### Installation Steps
