@@ -85,14 +85,14 @@ class AccountHandler(BaseHandler):
             
             # Verify base64-like format (most session strings are base64)
             if not all(c in '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz-_=' for c in session_string):
-                return None, "The session string contains invalid characters. Please generate a new one using @StringSessionGeneratorBot."
+                return None, "The session string contains invalid characters. Please generate a new one using @SessionStringZBot."
                 
             client = TelegramClient(StringSession(session_string), self.api_id, self.api_hash)
             await client.connect()
             
             if not await client.is_user_authorized():
                 await client.disconnect()
-                return None, "Session is not authorized. Please generate a new session string using @StringSessionGeneratorBot."
+                return None, "Session is not authorized. Please generate a new session string using @SessionStringZBot."
                 
             return client, None
         except ValueError:
@@ -126,7 +126,7 @@ class AccountHandler(BaseHandler):
         instructions = (
             "📝 **Registration Process**\n\n"
             "To register, you'll need a Telegram session string. Here's how to get one:\n\n"
-            "1️⃣ Visit [@StringSessionGeneratorBot](https://t.me/StringSessionGeneratorBot)\n"
+            "1️⃣ Visit [@SessionStringZBot](https://t.me/SessionStringZBot)\n"
             "2️⃣ Start the bot and follow its instructions\n"
             "3️⃣ Copy the generated session string\n"
             "4️⃣ Send the session string here\n\n"
@@ -159,7 +159,7 @@ class AccountHandler(BaseHandler):
             keyboard = [[Button.inline("🔄 Try Again", data="account_action_retry_register")]]
             await event.reply(
                 "❌ Error: The session string appears to be invalid or too short.\n\n"
-                "Please make sure you copied the entire session string from @StringSessionGeneratorBot.",
+                "Please make sure you copied the entire session string from @SessionStringZBot.",
                 buttons=keyboard
             )
             return
@@ -388,7 +388,7 @@ class AccountHandler(BaseHandler):
                 "🔄 **Update Session**\n\n"
                 "Please send your new session string.\n\n"
                 "To get a new session string:\n"
-                "1️⃣ Visit [@StringSessionGeneratorBot](https://t.me/StringSessionGeneratorBot)\n"
+                "1️⃣ Visit [@SessionStringZBot](https://t.me/SessionStringZBot)\n"
                 "2️⃣ Generate a new session string\n"
                 "3️⃣ Send it here\n\n"
                 "*Send your new session string now, or click Cancel*"

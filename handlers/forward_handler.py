@@ -141,11 +141,11 @@ class ForwardHandler(BaseHandler):
 
         keyboard = []
         for group in groups:
-            minutes = group['interval'] // 60
+            group_title = group.get('title', f"Group {group['group_id']}")
             selected = "☑" if str(group['group_id']) in self.pending_forwards[user_id]['selected_groups'] else "☐"
             keyboard.append([
                 Button.inline(
-                    f"{selected} Group {group['group_id']} ({minutes}min)",
+                    f"{selected} {group_title}",
                     data=f"forward_toggle_{group['group_id']}"
                 )
             ])
@@ -386,7 +386,7 @@ class ForwardHandler(BaseHandler):
                             "group_id": group_id
                         })
 
-                        if not group:
+                        if not group or "interval" not in group:
                             continue
 
                         last_time = self.last_forward_time.get(user_id, {}).get(

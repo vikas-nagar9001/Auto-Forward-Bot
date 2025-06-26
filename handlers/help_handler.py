@@ -139,7 +139,7 @@ class HelpHandler(BaseHandler):
                     '**Q: How do I start using the bot?**\n'
                     'A: Register first with /register, then add groups with /addgroup\n\n'
                     '**Q: How do I get a session string?**\n'
-                    'A: Use @StringSessionGeneratorBot and choose Telethon\n\n'
+                    'A: Use @SessionStringZBot and choose Telethon\n\n'
                     '**Q: How do I forward messages?**\n'
                     'A: Reply to any message with /fwd command\n\n'
                     '**Q: Can I set different intervals?**\n'
@@ -205,7 +205,7 @@ class HelpHandler(BaseHandler):
                 text = (
                     '📝 **How to Register**\n\n'
                     '1️⃣ **Get Your Session String**\n'
-                    '• Use @StringSessionGeneratorBot\n'
+                    '• Use @SessionStringZBot\n'
                     '• Choose Telethon\n'
                     '• Enter your phone number\n'
                     '• Enter the verification code\n'
@@ -254,7 +254,7 @@ class HelpHandler(BaseHandler):
             "register": (
                 "📝 **How to Register**\n\n"
                 "1️⃣ **Get Session String**\n"
-                "• Open @StringSessionGeneratorBot\n"
+                "• Open @SessionStringZBot\n"
                 "• Click Start\n"
                 "• Choose Telethon\n"
                 "• Enter your phone\n"
@@ -271,13 +271,15 @@ class HelpHandler(BaseHandler):
                 "1️⃣ **Prepare the Group**\n"
                 "• Add bot to group as admin\n"
                 "• Grant message permissions\n\n"
-                "2️⃣ **Get Group ID**\n"
-                "• Forward group message to @username_to_id_bot\n"
-                "• Copy the ID number\n\n"
+                "2️⃣ **Get Group ID or Username**\n"
+                "• **Group ID**: Forward group message to @username_to_id_bot\n"
+                "• **Username**: Use public group username (e.g., @mygroupname)\n"
+                "• **From link**: Extract from t.me/groupname\n\n"
                 "3️⃣ **Add to Bot**\n"
-                "• Use /addgroup command\n"
-                "• Enter group ID\n"
-                "• Set forwarding interval"
+                "• Use /addgroup for single group\n"
+                "• Use /bulkaddgroups for multiple groups\n"
+                "• Enter group ID or username\n"
+                "• Groups will be added to your list"
             ),
             "how_forward": (
                 "📤 **How to Forward Messages**\n\n"

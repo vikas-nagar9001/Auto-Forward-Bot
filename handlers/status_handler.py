@@ -84,7 +84,7 @@ class StatusHandler(BaseHandler):
 
             for group_id in message["target_groups"]:
                 group = self.groups_collection.find_one({"user_id": user_id, "group_id": int(group_id)})
-                if group:
+                if group and "interval" in group:
                     minutes = group["interval"] // 60
                     last_time = self.forward_handler.last_forward_time.get(user_id, {}).get(
                         int(group_id), {}).get(message["message_id"], 0)
@@ -139,9 +139,13 @@ class StatusHandler(BaseHandler):
 
         schedule_msg = "⏱️ **Forwarding Schedules**\n\n"
         for group in groups:
-            minutes = group["interval"] // 60
-            schedule_msg += f"🔹 **Group {group['group_id']}**\n"
-            schedule_msg += f"   Interval: Every {minutes} minutes\n"
+            if "interval" in group:
+                minutes = group["interval"] // 60
+                schedule_msg += f"🔹 **Group {group['group_id']}**\n"
+                schedule_msg += f"   Interval: Every {minutes} minutes\n"
+            else:
+                schedule_msg += f"🔹 **Group {group['group_id']}**\n"
+                schedule_msg += f"   Interval: Not set (will be set when forwarding starts)\n"
             
             # Get active forwards for this group
             active_forwards = sum(

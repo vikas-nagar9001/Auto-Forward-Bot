@@ -39,7 +39,7 @@ class KeyboardHandler(BaseHandler):
             ],
             [
                 Button.inline("➕ Add Group", data="kb_quick_add_group"),
-                Button.inline("⏱️ Intervals", data="kb_quick_intervals"),
+                Button.inline("📥 Bulk Add", data="kb_quick_bulk_add"),
                 Button.inline("👥 Groups", data="kb_quick_groups")
             ],
             [
@@ -127,6 +127,23 @@ class KeyboardHandler(BaseHandler):
             await event.edit(
                 "➕ **Add Group**\n\n"
                 "Choose how to add a group:",
+                buttons=keyboard
+            )
+
+        elif data == "bulk_add":
+            # Start bulk add process
+            keyboard = [
+                [Button.inline("📥 Start Bulk Add", data="group_action_bulk_add")],
+                [Button.inline("📝 View Example", data="group_action_bulk_example")],
+                [Button.inline("« Back", data="kb_main")]
+            ]
+            await event.edit(
+                "📥 **Bulk Add Groups**\n\n"
+                "Add multiple groups at once!\n\n"
+                "• Support for Group IDs and usernames\n"
+                "• Up to 10 groups per batch\n"
+                "• Mix IDs and usernames freely\n\n"
+                "Ready to start?",
                 buttons=keyboard
             )
 

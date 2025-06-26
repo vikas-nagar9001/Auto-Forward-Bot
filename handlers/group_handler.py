@@ -27,12 +27,12 @@ class GroupHandler(BaseHandler):
             events.NewMessage(pattern=r'^/addgroup$')
         )
         self.bot.add_event_handler(
-            self.remove_group_command,
-            events.NewMessage(pattern=r'^/removegroup$')
+            self.bulk_add_groups_command,
+            events.NewMessage(pattern=r'^/bulkaddgroups$')
         )
         self.bot.add_event_handler(
-            self.set_interval_command,
-            events.NewMessage(pattern=r'^/setinterval$')
+            self.remove_group_command,
+            events.NewMessage(pattern=r'^/removegroup$')
         )
         self.bot.add_event_handler(
             self.my_groups_command,
@@ -135,16 +135,63 @@ class GroupHandler(BaseHandler):
         instructions = (
             "➕ **Add a New Group**\n\n"
             "Let's add a group step by step:\n\n"
-            "1️⃣ First, add this bot to your group as admin\n"
-            "2️⃣ Get the group ID:\n"
-            "   • Forward a message from the group to @username_to_id_bot, or\n"
-            "   • Use the ID from group invite link after 't.me/+' or 'joinchat/'\n\n"
-            "3️⃣ Send the group ID here\n\n"
-            "*Send the group ID now, or use the buttons below:*"
+            "1️⃣ First, join the group with session account\n"
+            "2️⃣ Get the group ID or username:\n"
+            "   • Group ID: Forward a message from the group to @username_to_id_bot\n"
+            "   • Username: Copy the group username (e.g., @mygroupname)\n"
+            "   • From invite link: Use the ID after 't.me/+' or 'joinchat/'\n\n"
+            "3️⃣ Send the group ID or username here\n\n"
+            "*Send the group ID (e.g., -1001234567890) or username (e.g., @mygroupname) now:*"
         )
 
         keyboard = [
-            [Button.inline("❓ How to Get Group ID", data="group_action_help_id")],
+            [Button.inline("❓ How to Get Group ID/Username", data="group_action_help_id")],
+            [Button.inline("❌ Cancel", data="group_action_cancel")]
+        ]
+        await event.reply(instructions, buttons=keyboard)
+
+    async def bulk_add_groups_command(self, event):
+        """Bulk add multiple groups command handler"""
+        user_id = event.sender_id
+        if not await self.check_registered(user_id):
+            await self.show_error(event, "You are not registered. Use /register first.")
+            return
+
+        # Start bulk group addition process
+        self.pending_group_actions[user_id] = {
+            "action": "bulk_add",
+            "step": "group_list"
+        }
+
+        instructions = (
+            "➕ **Bulk Add Multiple Groups**\n\n"
+            "Add multiple groups at once! Follow these steps:\n\n"
+            "1️⃣ First, join all groups with your session account\n"
+            "2️⃣ Prepare your group list in one of these formats:\n\n"
+            "**Format 1: Group IDs (one per line)**\n"
+            "`-1001234567890`\n"
+            "`-1001234567891`\n"
+            "`-1001234567892`\n\n"
+            "**Format 2: Usernames (one per line)**\n"
+            "`@group1name`\n"
+            "`@group2name`\n"
+            "`group3name`\n\n"
+            "**Format 3: t.me Links (one per line)**\n"
+            "`https://t.me/group1name`\n"
+            "`t.me/group2name`\n"
+            "`https://t.me/group3name`\n\n"
+            "**Format 4: Mixed (IDs, usernames, and links)**\n"
+            "`-1001234567890`\n"
+            "`@group2name`\n"
+            "`https://t.me/group3name`\n"
+            "`group4name`\n\n"
+            "3️⃣ Send all group IDs/usernames/links in a single message\n\n"
+            "*Send your group list now (max 10 groups per batch):*"
+        )
+
+        keyboard = [
+            [Button.inline("📝 Example Format", data="group_action_bulk_example")],
+            [Button.inline("❓ How to Get Group IDs", data="group_action_help_id")],
             [Button.inline("❌ Cancel", data="group_action_cancel")]
         ]
         await event.reply(instructions, buttons=keyboard)
@@ -163,7 +210,81 @@ class GroupHandler(BaseHandler):
         if action_data["action"] == "add":
             if action_data["step"] == "group_id":
                 try:
-                    group_id = int(text)
+                    # Try to parse as group ID first
+                    group_id = None
+                    if text.lstrip('-').isdigit():
+                        group_id = int(text)
+                    elif text.startswith('@'):
+                        # It's a username, try to resolve it
+                        username = text[1:]  # Remove the @ prefix
+                        group_id = await self.resolve_username_to_id(username)
+                        if group_id is None:
+                            keyboard = [
+                                [Button.inline("🔄 Try Again", data="group_action_retry")],
+                                [Button.inline("❓ Help", data="group_action_help_id")],
+                                [Button.inline("❌ Cancel", data="group_action_cancel")]
+                            ]
+                            await event.reply(
+                                f"❌ **Username Resolution Failed**\n\n"
+                                f"Could not find a group with username @{username}.\n"
+                                "Make sure the username is correct and the group is public.\n\n"
+                                "Please try again with a group ID or a valid username.",
+                                buttons=keyboard
+                            )
+                            return
+                    elif text.startswith('t.me/'):
+                        # Extract username from t.me link
+                        username = text.replace('t.me/', '')
+                        if username.startswith('+'):
+                            # It's a private group link, can't handle this
+                            keyboard = [
+                                [Button.inline("🔄 Try Again", data="group_action_retry")],
+                                [Button.inline("❓ Help", data="group_action_help_id")],
+                                [Button.inline("❌ Cancel", data="group_action_cancel")]
+                            ]
+                            await event.reply(
+                                f"❌ **Private Group Link**\n\n"
+                                f"Private group links (t.me/+...) cannot be resolved.\n"
+                                "Please use the group ID or public username instead.",
+                                buttons=keyboard
+                            )
+                            return
+                        else:
+                            group_id = await self.resolve_username_to_id(username)
+                            if group_id is None:
+                                keyboard = [
+                                    [Button.inline("🔄 Try Again", data="group_action_retry")],
+                                    [Button.inline("❓ Help", data="group_action_help_id")],
+                                    [Button.inline("❌ Cancel", data="group_action_cancel")]
+                                ]
+                                await event.reply(
+                                    f"❌ **Username Resolution Failed**\n\n"
+                                    f"Could not find a group with username {username}.\n"
+                                    "Make sure the username is correct and the group is public.\n\n"
+                                    "Please try again with a group ID or a valid username.",
+                                    buttons=keyboard
+                                )
+                                return
+                    else:
+                        # Try to resolve as username without @ prefix
+                        group_id = await self.resolve_username_to_id(text)
+                        if group_id is None:
+                            keyboard = [
+                                [Button.inline("🔄 Try Again", data="group_action_retry")],
+                                [Button.inline("❓ Help", data="group_action_help_id")],
+                                [Button.inline("❌ Cancel", data="group_action_cancel")]
+                            ]
+                            await event.reply(
+                                f"❌ **Invalid Input**\n\n"
+                                f"'{text}' is not a valid group ID or username.\n\n"
+                                "Please provide:\n"
+                                "• A group ID (e.g., -1001234567890)\n"
+                                "• A username (e.g., @mygroupname or mygroupname)\n"
+                                "• A public group link (e.g., t.me/mygroupname)",
+                                buttons=keyboard
+                            )
+                            return
+
                     # Show validation progress
                     progress_msg = await event.reply(
                         "🔄 Validating group access...\n"
@@ -182,80 +303,62 @@ class GroupHandler(BaseHandler):
                         await progress_msg.edit(
                             f"❌ **Validation Failed**\n\n"
                             f"Error: {error}\n\n"
-                            "Please try again with a different group ID.",
+                            "Please try again with a different group ID or username.",
                             buttons=keyboard
                         )
                         return
 
                     # Check if group already exists
-                    if self.groups_collection.find_one({"user_id": user_id, "group_id": group_id}):
+                    existing_group = self.groups_collection.find_one({"user_id": user_id, "group_id": group_id})
+                    if existing_group:
                         keyboard = [
-                            [Button.inline("⏱️ Update Interval", data=f"group_action_update_interval_{group_id}")],
                             [Button.inline("🔄 Add Different Group", data="group_action_retry")],
                             [Button.inline("❌ Cancel", data="group_action_cancel")]
                         ]
                         await progress_msg.edit(
                             f"❌ Group {group_id} is already in your list.\n"
-                            "What would you like to do?",
+                            "Please try adding a different group.",
                             buttons=keyboard
                         )
                         return
 
-                    # Group is valid, move to interval selection
-                    action_data["group_id"] = group_id
-                    action_data["step"] = "interval"
-
+                    # Group is valid, add it directly without asking for interval
                     group_title = self.group_validation_cache[user_id][group_id]["title"]
-                    await progress_msg.edit(
-                        f"✅ **Group Validated Successfully!**\n\n"
-                        f"Group: {group_title}\n"
-                        f"ID: `{group_id}`\n\n"
-                        "Now, choose the forwarding interval:",
-                        buttons=[
-                            [
-                                Button.inline("30 min", data=f"group_action_set_interval_{group_id}_30"),
-                                Button.inline("1 hour", data=f"group_action_set_interval_{group_id}_60")
-                            ],
-                            [
-                                Button.inline("2 hours", data=f"group_action_set_interval_{group_id}_120"),
-                                Button.inline("Custom", data=f"group_action_set_interval_{group_id}_custom")
-                            ],
-                            [Button.inline("« Back", data="group_action_retry")],
-                            [Button.inline("❌ Cancel", data="group_action_cancel")]
-                        ]
-                    )
-
-                except ValueError:
-                    keyboard = [
-                        [Button.inline("❓ How to Get Group ID", data="group_action_help_id")],
-                        [Button.inline("❌ Cancel", data="group_action_cancel")]
-                    ]
-                    await event.reply(
-                        "❌ Invalid group ID format.\n\n"
-                        "Example: `-1001234567890`",
-                        buttons=keyboard
-                    )
-                    return
-
-            elif action_data["step"] == "custom_interval":
-                try:
-                    minutes = int(text)
-                    if minutes < 1:
-                        raise ValueError("Interval must be at least 1 minute")
-                    elif minutes > 1440:
-                        raise ValueError("Interval cannot be more than 24 hours (1440 minutes)")
                     
-                    group_id = action_data["group_id"]
-                    group_title = self.group_validation_cache[user_id][group_id]["title"]
-
-                    # Add group to database
-                    self.groups_collection.insert_one({
-                        "user_id": user_id,
-                        "group_id": group_id,
-                        "title": group_title,
-                        "interval": minutes * 60,
-                        "added_at": time.time()
-                    })
+                    # Add group to database without interval (interval will be set during forwarding)
+                    try:
+                        self.groups_collection.insert_one({
+                            "user_id": user_id,
+                            "group_id": group_id,
+                            "title": group_title,
+                            "added_at": time.time()
+                        })
+                    except Exception as e:
+                        # Handle duplicate key error or other database errors
+                        if "duplicate key error" in str(e).lower() or "11000" in str(e):
+                            keyboard = [
+                                [Button.inline("🔄 Add Different Group", data="group_action_retry")],
+                                [Button.inline("❌ Cancel", data="group_action_cancel")]
+                            ]
+                            await progress_msg.edit(
+                                f"❌ Group {group_id} is already in your list.\n"
+                                "Please try adding a different group.",
+                                buttons=keyboard
+                            )
+                            return
+                        else:
+                            logger.error(f"Error adding group to database: {e}")
+                            keyboard = [
+                                [Button.inline("🔄 Try Again", data="group_action_retry")],
+                                [Button.inline("❌ Cancel", data="group_action_cancel")]
+                            ]
+                            await progress_msg.edit(
+                                f"❌ **Database Error**\n\n"
+                                f"Failed to add group to database. Please try again.\n"
+                                f"Error: {str(e)}",
+                                buttons=keyboard
+                            )
+                            return
 
                     # Clear all pending data
                     del self.pending_group_actions[user_id]
@@ -267,51 +370,246 @@ class GroupHandler(BaseHandler):
                         [Button.inline("➕ Add Another Group", data="group_action_add")],
                         [Button.inline("📤 Start Forwarding", data="forward_new")]
                     ]
-                    await event.reply(
-                        f"✅ Successfully added group!\n\n"
+                    await progress_msg.edit(
+                        f"✅ **Group Added Successfully!**\n\n"
                         f"Group: {group_title}\n"
-                        f"ID: `{group_id}`\n"
-                        f"Interval: {minutes} minute(s)\n\n"
+                        f"ID: `{group_id}`\n\n"
+                        "The group has been added to your list. You can now forward messages to it!\n\n"
                         "What would you like to do next?",
                         buttons=keyboard
                     )
-                except ValueError as e:
+
+                except ValueError:
+                    keyboard = [
+                        [Button.inline("❓ How to Get Group ID/Username", data="group_action_help_id")],
+                        [Button.inline("❌ Cancel", data="group_action_cancel")]
+                    ]
                     await event.reply(
-                        f"❌ {str(e)}\n"
-                        "Please enter a valid number between 1 and 1440.",
-                        buttons=[[Button.inline("❌ Cancel", data="group_action_cancel")]]
+                        "❌ Invalid group ID format.\n\n"
+                        "Example: `-1001234567890`",
+                        buttons=keyboard
                     )
+                    return
 
-        elif action_data["action"] == "set_interval":
-            try:
-                minutes = int(text)
-                if minutes < 1:
-                    raise ValueError("Interval must be at least 1 minute")
-                elif minutes > 1440:
-                    raise ValueError("Interval cannot be more than 24 hours (1440 minutes)")
+        elif action_data["action"] == "bulk_add":
+            if action_data["step"] == "group_list":
+                # Process bulk group addition
+                group_ids = []
+                usernames = []
+                errors = []
+                
+                # Split input by new lines and process each line
+                lines = text.split('\n')
+                for line in lines:
+                    if len(group_ids) + len(usernames) >= 10:
+                        break  # Limit to 10 groups
+                    
+                    entry = line.strip()
+                    if not entry:
+                        continue  # Skip empty lines
+                    elif entry.lstrip('-').isdigit():
+                        # It's a group ID
+                        group_id = int(entry)
+                        group_ids.append(group_id)
+                    elif entry.startswith('@'):
+                        # It's a username
+                        username = entry[1:]  # Remove the @
+                        usernames.append(username)
+                    elif 't.me/' in entry:
+                        # It's a t.me link, extract username
+                        if '+' in entry:
+                            # Private group link, can't handle this
+                            errors.append(f"Private group link not supported: {entry}")
+                        else:
+                            # Extract username from t.me link
+                            if entry.startswith('https://'):
+                                username = entry.replace('https://t.me/', '')
+                            elif entry.startswith('http://'):
+                                username = entry.replace('http://t.me/', '')
+                            elif entry.startswith('t.me/'):
+                                username = entry.replace('t.me/', '')
+                            else:
+                                # Contains t.me/ but in unexpected format
+                                try:
+                                    username = entry.split('t.me/')[-1]
+                                except:
+                                    errors.append(f"Invalid t.me link format: {entry}")
+                                    continue
+                            
+                            # Clean up username (remove trailing slashes, parameters, etc.)
+                            username = username.split('?')[0]  # Remove URL parameters
+                            username = username.strip('/')  # Remove trailing slashes
+                            
+                            if username:
+                                usernames.append(username)
+                            else:
+                                errors.append(f"Could not extract username from: {entry}")
+                    else:
+                        # Try to treat as plain username without @ prefix
+                        if entry.replace('_', '').replace('-', '').isalnum():
+                            usernames.append(entry)
+                        else:
+                            errors.append(f"Invalid entry: {entry}")
 
-                group_id = action_data["group_id"]
-                # Update interval in database
-                self.groups_collection.update_one(
-                    {"user_id": user_id, "group_id": group_id},
-                    {"$set": {"interval": minutes * 60}}
+                # Resolve usernames to IDs
+                for username in usernames:
+                    if len(group_ids) >= 10:
+                        break  # Limit to 10 groups
+                    
+                    group_id = await self.resolve_username_to_id(username)
+                    if group_id:
+                        group_ids.append(group_id)
+                    else:
+                        errors.append(f"Could not resolve username: {username}")
+
+                # Remove duplicates
+                group_ids = list(set(group_ids))
+
+                if not group_ids and not errors:
+                    await event.reply(
+                        "❌ No valid group IDs or usernames found. Please send a list of group IDs or usernames.",
+                        buttons=[[Button.inline("🔄 Try Again", data="group_action_bulk_retry"), Button.inline("❌ Cancel", data="group_action_cancel")]]
+                    )
+                    return
+
+                if errors and not group_ids:
+                    # All entries had errors, show them to the user
+                    error_message = "❌ **All Entries Had Errors**\n\n" + "\n".join(errors[:10])  # Limit to 10 errors for readability
+                    if len(errors) > 10:
+                        error_message += f"\n... and {len(errors) - 10} more errors"
+                    keyboard = [
+                        [Button.inline("🔄 Try Again", data="group_action_bulk_retry")],
+                        [Button.inline("❓ Help", data="group_action_help_id")],
+                        [Button.inline("❌ Cancel", data="group_action_cancel")]
+                    ]
+                    await event.reply(error_message, buttons=keyboard)
+                    return
+
+                if errors and group_ids:
+                    # Some entries had errors, but we have valid group IDs to process
+                    logger.warning(f"Bulk add had {len(errors)} errors but {len(group_ids)} valid groups for user {user_id}")
+                    # Continue processing the valid groups, errors will be shown in final result
+
+                # Show validation progress
+                progress_msg = await event.reply(
+                    "🔄 Validating group access for multiple groups...\n"
+                    "Please wait while I check permissions."
                 )
 
-                # Clear pending action
+                # Validate each group ID
+                valid_groups = []
+                invalid_groups = []
+                for group_id in group_ids:
+                    is_valid, error = await self.validate_group_id(user_id, group_id)
+                    if is_valid:
+                        valid_groups.append(group_id)
+                    else:
+                        invalid_groups.append((group_id, error))
+
+                # Prepare result message
+                result_message = "✅ **Bulk Add Results**\n\n"
+
+                # Show parsing errors if any
+                if errors:
+                    result_message += f"⚠️ **Parsing Errors ({len(errors)}):**\n"
+                    for error in errors[:5]:  # Show first 5 errors
+                        result_message += f"• {error}\n"
+                    if len(errors) > 5:
+                        result_message += f"... and {len(errors) - 5} more errors\n"
+                    result_message += "\n"
+
+                if valid_groups:
+                    result_message += "Successfully validated group IDs:\n"
+                    for group_id in valid_groups:
+                        result_message += f"• {group_id}\n"
+                else:
+                    result_message += "No valid group IDs found.\n"
+
+                if invalid_groups:
+                    result_message += "\n❌ Invalid group IDs:\n"
+                    for group_id, error in invalid_groups:
+                        result_message += f"• {group_id}: {error}\n"
+
+                # Check for duplicates in the user's groups
+                existing_groups = list(self.groups_collection.find({"user_id": user_id, "group_id": {"$in": valid_groups}}))
+                existing_group_ids = [group["group_id"] for group in existing_groups]
+
+                if existing_group_ids:
+                    result_message += "\n⚠️ The following group IDs are already in your list and will be skipped:\n"
+                    for group_id in existing_group_ids:
+                        result_message += f"• {group_id}\n"
+                    # Remove existing groups from the valid list
+                    valid_groups = [gid for gid in valid_groups if gid not in existing_group_ids]
+
+                if not valid_groups:
+                    result_message += "\n❌ No new groups to add (all groups already exist)."
+                    await progress_msg.edit(result_message)
+                    del self.pending_group_actions[user_id]
+                    return
+
+                # Add new groups to the database
+                added_groups = []
+                failed_groups = []
+                
+                for group_id in valid_groups:
+                    group_title = f"Group {group_id}"  # Default title
+                    # Check if we can get the title from the group info
+                    try:
+                        client = self.user_clients.get(user_id)
+                        if client and client.is_connected() and await client.is_user_authorized():
+                            chat = await client.get_entity(group_id)
+                            group_title = getattr(chat, "title", f"Group {group_id}")
+                    except:
+                        pass  # Ignore errors and use default title
+                    
+                    # Add group to the database
+                    try:
+                        self.groups_collection.insert_one({
+                            "user_id": user_id,
+                            "group_id": group_id,
+                            "title": group_title,
+                            "added_at": time.time()
+                        })
+                        added_groups.append(group_id)
+                    except Exception as e:
+                        # Handle duplicate key error or other database errors
+                        if "duplicate key error" in str(e).lower() or "11000" in str(e):
+                            failed_groups.append((group_id, "Already exists"))
+                        else:
+                            logger.error(f"Error adding group {group_id} to database: {e}")
+                            failed_groups.append((group_id, "Database error"))
+
+                # Finalize the message
+                if added_groups:
+                    result_message += f"\n✅ Successfully added {len(added_groups)} groups:\n"
+                    for group_id in added_groups:
+                        result_message += f"• {group_id}\n"
+                
+                if failed_groups:
+                    result_message += f"\n❌ Failed to add {len(failed_groups)} groups:\n"
+                    for group_id, error in failed_groups:
+                        result_message += f"• {group_id}: {error}\n"
+
+                # Add summary
+                total_processed = len(group_ids)
+                total_added = len(added_groups)
+                total_failed = len(failed_groups) + len(existing_group_ids) + len(invalid_groups)
+                
+                result_message += f"\n📊 **Summary:**\n"
+                result_message += f"• Total processed: {total_processed}\n"
+                result_message += f"• Successfully added: {total_added}\n"
+                result_message += f"• Failed/Skipped: {total_failed}\n"
+                
+                if errors:
+                    result_message += f"• Parsing errors: {len(errors)}\n"
+
+                await progress_msg.edit(result_message)
+
+                # Clear pending actions
                 del self.pending_group_actions[user_id]
 
-                keyboard = [
-                    [Button.inline("👥 View All Groups", data="group_action_view")],
-                    [Button.inline("⏱️ Update Another", data="group_action_set_interval")]
-                ]
-                await event.reply(
-                    f"✅ Updated interval for group {group_id} to {minutes} minutes!",
-                    buttons=keyboard
-                )
-            except ValueError as e:
-                await self.show_error(event, str(e) or "Please enter a valid number between 1 and 1440 minutes")
-            except Exception as e:
-                await self.show_error(event, f"An error occurred: {str(e)}")
+            else:
+                await event.reply("❌ Invalid step in bulk add process.", buttons=[[Button.inline("❌ Cancel", data="group_action_cancel")]])
 
     async def group_action_callback(self, event):
         """Handle group action callbacks"""
@@ -331,18 +629,19 @@ class GroupHandler(BaseHandler):
                 }
                 
                 instructions = (
-                     "➕ **Add a New Group**\n\n"
-            "Let's add a group step by step:\n\n"
-            "1️⃣ First, add this bot to your group as admin\n"
-            "2️⃣ Get the group ID:\n"
-            "   • Forward a message from the group to @username_to_id_bot, or\n"
-            "   • Use the ID from group invite link after 't.me/+' or 'joinchat/'\n\n"
-            "3️⃣ Send the group ID here\n\n"
-            "*Send the group ID now, or use the buttons below:*"
+                    "➕ **Add a New Group**\n\n"
+                    "Let's add a group step by step:\n\n"
+                    "1️⃣ First, join the group with session account\n"
+                    "2️⃣ Get the group ID or username:\n"
+                    "   • **Group ID**: Forward a message from the group to @username_to_id_bot\n"
+                    "   • **Username**: Use the group's public username (e.g., @mygroupname)\n"
+                    "   • **From invite link**: Use the ID after 't.me/+' or 'joinchat/'\n\n"
+                    "3️⃣ Send the group ID or username here\n\n"
+                    "*Send the group ID or username now, or use the buttons below:*"
                 )
 
                 keyboard = [
-                    [Button.inline("❓ How to Get Group ID", data="group_action_help_id")],
+                    [Button.inline("❓ How to Get Group ID/Username", data="group_action_help_id")],
                     [Button.inline("❌ Cancel", data="group_action_cancel")]
                 ]
                 await event.edit(instructions, buttons=keyboard)
@@ -353,6 +652,7 @@ class GroupHandler(BaseHandler):
                 if not groups:
                     keyboard = [
                         [Button.inline("➕ Add Group", data="group_action_add")],
+                        [Button.inline("📥 Bulk Add Groups", data="group_action_bulk_add")],
                         [Button.inline("« Back to Menu", data="account_action_view")]
                     ]
                     await event.edit(
@@ -368,15 +668,15 @@ class GroupHandler(BaseHandler):
                 
                 for group in groups:
                     group_id = group['group_id']
-                    interval = group['interval'] // 60  # Convert to minutes
-                    message += f"• Group {group_id} (every {interval}min)\n"
+                    group_title = group.get('title', f'Group {group_id}')
+                    message += f"• {group_title} ({group_id})\n"
                     keyboard.append([
-                        Button.inline(f"⚙️ Group {group_id}", data=f"group_action_manage_{group_id}")
+                        Button.inline(f"⚙️ {group_title}", data=f"group_action_manage_{group_id}")
                     ])
 
-                message += "\nSelect a group to manage, or add a new one:"
+                message += "\nSelect a group to manage, or add new ones:"
                 keyboard.extend([
-                    [Button.inline("➕ Add Group", data="group_action_add")],
+                    [Button.inline("➕ Add Group", data="group_action_add"), Button.inline("📥 Bulk Add", data="group_action_bulk_add")],
                     [Button.inline("« Back to Menu", data="account_action_view")]
                 ])
                 
@@ -389,18 +689,43 @@ class GroupHandler(BaseHandler):
                     "step": "group_id"
                 }
 
-                keyboard = [[Button.inline("❌ Cancel", data="group_action_cancel")]]
-                await event.edit(
-                   "➕ **Add a New Group**\n\n"
-            "Let's add a group step by step:\n\n"
-            "1️⃣ First, add this bot to your group as admin\n"
-            "2️⃣ Get the group ID:\n"
-            "   • Forward a message from the group to @username_to_id_bot, or\n"
-            "   • Use the ID from group invite link after 't.me/+' or 'joinchat/'\n\n"
-            "3️⃣ Send the group ID here\n\n"
-            "*Send the group ID now, or use the buttons below:*",
-                    buttons=keyboard
+                instructions = (
+                    "➕ **Add a New Group**\n\n"
+                    "Let's add a group step by step:\n\n"
+                    "1️⃣ First, join the group with session account\n"
+                    "2️⃣ Get the group ID or username:\n"
+                    "   • **Group ID**: Forward a message from the group to @username_to_id_bot\n"
+                    "   • **Username**: Use the group's public username (e.g., @mygroupname)\n"
+                    "   • **From invite link**: Use the ID after 't.me/+' or 'joinchat/'\n\n"
+                    "3️⃣ Send the group ID or username here\n\n"
+                    "*Send the group ID or username now, or use the buttons below:*"
                 )
+
+                keyboard = [[Button.inline("❌ Cancel", data="group_action_cancel")]]
+                await event.edit(instructions, buttons=keyboard)
+
+            elif data == "bulk_add":
+                # Start bulk group addition process
+                self.pending_group_actions[user_id] = {
+                    "action": "bulk_add",
+                    "step": "group_list"
+                }
+
+                instructions = (
+                    "📥 **Bulk Add Multiple Groups**\n\n"
+                    "Add multiple groups at once! Send your group list:\n\n"
+                    "**Group IDs** (one per line): `-1001234567890`\n"
+                    "**Usernames** (one per line): `@groupname` or `groupname`\n"
+                    "**Mixed**: Both IDs and usernames\n\n"
+                    "*Send your group list now (max 10 groups):*"
+                )
+
+                keyboard = [
+                    [Button.inline("📝 Example Format", data="group_action_bulk_example")],
+                    [Button.inline("❓ How to Get Group IDs", data="group_action_help_id")],
+                    [Button.inline("❌ Cancel", data="group_action_cancel")]
+                ]
+                await event.edit(instructions, buttons=keyboard)
 
             elif data.startswith("manage_"):
                 group_id = int(data.replace("manage_", ""))
@@ -409,69 +734,18 @@ class GroupHandler(BaseHandler):
                     await self.show_error(event, "Group not found.")
                     return
 
-                interval = group['interval'] // 60  # Convert to minutes
+                group_title = group.get('title', f'Group {group_id}')
                 keyboard = [
-                    [Button.inline("⏱️ Change Interval", data=f"group_action_interval_{group_id}")],
                     [Button.inline("🗑️ Remove Group", data=f"group_action_remove_{group_id}")],
                     [Button.inline("« Back to Groups", data="group_action_view")]
                 ]
                 
                 await event.edit(
-                    f"⚙️ **Group {group_id} Settings**\n\n"
-                    f"Current interval: {interval} minutes\n\n"
+                    f"⚙️ **{group_title} Settings**\n\n"
+                    f"Group ID: `{group_id}`\n\n"
                     "What would you like to do?",
                     buttons=keyboard
                 )
-
-            elif data.startswith("interval_"):
-                group_id = int(data.replace("interval_", ""))
-                keyboard = [
-                    [
-                        Button.inline("30 min", data=f"group_action_set_interval_{group_id}_30"),
-                        Button.inline("1 hour", data=f"group_action_set_interval_{group_id}_60")
-                    ],
-                    [
-                        Button.inline("2 hours", data=f"group_action_set_interval_{group_id}_120"),
-                        Button.inline("Custom", data=f"group_action_set_interval_{group_id}_custom")
-                    ],
-                    [Button.inline("« Back", data=f"group_action_manage_{group_id}")]
-                ]
-                await event.edit(
-                    "⏱️ **Set Message Interval**\n\n"
-                    "How often should messages be forwarded to this group?",
-                    buttons=keyboard
-                )
-
-            elif data.startswith("set_interval_"):
-                parts = data.replace("set_interval_", "").split("_")
-                if len(parts) == 2:
-                    group_id, interval = parts
-                elif len(parts) == 3:
-                    _, group_id, interval = parts
-                else:
-                    await self.show_error(event, "Invalid interval data format.")
-                    return
-                group_id = int(group_id)
-                if interval == "custom":
-                    # Check if this is an add or update operation
-                    is_add = any(pd.get("action") == "add" for pd in [self.pending_group_actions.get(user_id, {})])
-                    
-                    self.pending_group_actions[user_id] = {
-                        "action": "add" if is_add else "set_interval",
-                        "step": "custom_interval",
-                        "group_id": group_id
-                    }
-                    keyboard = [[Button.inline("❌ Cancel", data=f"group_action_cancel")]]
-                    await event.edit(
-                        "📝 Enter the interval in minutes (e.g., 45):\n\n"
-                        "• Minimum: 1 minute\n"
-                        "• Maximum: 1440 minutes (24 hours)",
-                        buttons=keyboard
-                    )
-                    return
-                
-                interval = int(interval)
-                await self.update_group_interval(event, user_id, group_id, interval)
 
             elif data.startswith("remove_"):
                 group_id = int(data.replace("remove_", ""))
@@ -500,6 +774,90 @@ class GroupHandler(BaseHandler):
                 else:
                     await self.show_error(event, "Failed to remove group. Please try again.")
 
+            elif data == "help_id":
+                help_text = (
+                    "❓ **How to Get Group ID or Username**\n\n"
+                    "**Option 1: Group ID (Recommended)**\n"
+                    "• Forward any message from your group to @username_to_id_bot\n"
+                    "• Copy the negative number (e.g., -1001234567890)\n\n"
+                    "**Option 2: Public Username**\n"
+                    "• Use the group's public username: @mygroupname\n"
+                    "• Or just the username: mygroupname\n\n"
+                    "**Option 3: From Public Link**\n"
+                    "• Extract username from t.me/mygroupname\n\n"
+                    "**Note:** Private groups (t.me/+...) require Group ID method."
+                )
+                keyboard = [
+                    [Button.inline("« Back", data="group_action_retry")],
+                    [Button.inline("❌ Cancel", data="group_action_cancel")]
+                ]
+                await event.edit(help_text, buttons=keyboard)
+
+            elif data == "bulk_example":
+                example_text = (
+                    "📝 **Bulk Add Format Examples**\n\n"
+                    "**Example 1: Group IDs only**\n"
+                    "```\n"
+                    "-1001234567890\n"
+                    "-1001234567891\n"
+                    "-1001234567892\n"
+                    "```\n\n"
+                    "**Example 2: Usernames only**\n"
+                    "```\n"
+                    "@cryptogroup\n"
+                    "@tradingchat\n"
+                    "technews\n"
+                    "```\n\n"
+                    "**Example 3: t.me Links only**\n"
+                    "```\n"
+                    "https://t.me/cryptogroup\n"
+                    "t.me/tradingchat\n"
+                    "https://t.me/technews\n"
+                    "```\n\n"
+                    "**Example 4: Mixed format**\n"
+                    "```\n"
+                    "-1001234567890\n"
+                    "@cryptogroup\n"
+                    "https://t.me/tradingchat\n"
+                    "technews\n"
+                    "-1001234567892\n"
+                    "```\n\n"
+                    "**Tips:**\n"
+                    "• One group per line\n"
+                    "• Max 10 groups per batch\n"
+                    "• Empty lines are ignored\n"
+                    "• Mix IDs, usernames, and links freely\n"
+                    "• Private links (t.me/+...) are not supported"
+                )
+                keyboard = [
+                    [Button.inline("« Back", data="group_action_bulk_retry")],
+                    [Button.inline("❌ Cancel", data="group_action_cancel")]
+                ]
+                await event.edit(example_text, buttons=keyboard)
+
+            elif data == "bulk_retry":
+                # Reset bulk group addition process
+                self.pending_group_actions[user_id] = {
+                    "action": "bulk_add",
+                    "step": "group_list"
+                }
+                
+                instructions = (
+                    "➕ **Bulk Add Multiple Groups**\n\n"
+                    "Send your group list in one of these formats:\n\n"
+                    "**Group IDs** (one per line): `-1001234567890`\n"
+                    "**Usernames** (one per line): `@groupname` or `groupname`\n"
+                    "**Mixed**: Both IDs and usernames\n\n"
+                    "*Send your group list now (max 10 groups):*"
+                )
+
+                keyboard = [
+                    [Button.inline("📝 Example Format", data="group_action_bulk_example")],
+                    [Button.inline("❓ How to Get Group IDs", data="group_action_help_id")],
+                    [Button.inline("❌ Cancel", data="group_action_cancel")]
+                ]
+                await event.edit(instructions, buttons=keyboard)
+
             elif data == "cancel":
                 if user_id in self.pending_group_actions:
                     del self.pending_group_actions[user_id]
@@ -512,49 +870,6 @@ class GroupHandler(BaseHandler):
         except Exception as e:
             await self.handle_error(event, e, "An error occurred while processing your request.")
 
-    async def update_group_interval(self, event, user_id: int, group_id: int, minutes: int):
-        """Update a group's forwarding interval or add new group"""
-        try:
-            # Check if group exists
-            existing_group = self.groups_collection.find_one({
-                "user_id": user_id, 
-                "group_id": group_id
-            })
-            
-            if existing_group:
-                # Update existing group
-                self.groups_collection.update_one(
-                    {"user_id": user_id, "group_id": group_id},
-                    {"$set": {"interval": minutes * 60}}
-                )
-            else:
-                # Add new group
-                group_title = self.group_validation_cache[user_id][group_id]["title"]
-                self.groups_collection.insert_one({
-                    "user_id": user_id,
-                    "group_id": group_id,
-                    "title": group_title,
-                    "interval": minutes * 60,
-                    "added_at": time.time()
-                })
-
-            # Clear any pending actions
-            if user_id in self.pending_group_actions:
-                del self.pending_group_actions[user_id]
-
-            keyboard = [
-                [Button.inline("« Back to Settings", data=f"group_action_manage_{group_id}")],
-                [Button.inline("👥 View All Groups", data="group_action_view")]
-            ]
-            
-            action = "updated" if existing_group else "added"
-            await event.edit(
-                f"✅ Successfully {action} group with interval of {minutes} minutes!",
-                buttons=keyboard
-            )
-        except Exception as e:
-            await self.handle_error(event, e, "Failed to update interval. Please try again.")
-
     async def my_groups_command(self, event):
         """Enhanced my groups command handler"""
         user_id = event.sender_id
@@ -564,7 +879,10 @@ class GroupHandler(BaseHandler):
 
         groups = await self.get_user_groups(user_id)
         if not groups:
-            keyboard = [[Button.inline("➕ Add First Group", data="group_action_add")]]
+            keyboard = [
+                [Button.inline("➕ Add First Group", data="group_action_add")],
+                [Button.inline("📥 Bulk Add Groups", data="group_action_bulk_add")]
+            ]
             await event.reply(
                 "❌ You don't have any groups configured.",
                 buttons=keyboard
@@ -575,15 +893,18 @@ class GroupHandler(BaseHandler):
         keyboard = []
 
         for group in groups:
-            minutes = group['interval'] // 60
-            groups_message += f"🔹 **Group {group['group_id']}**\n"
-            groups_message += f"   ⏱️ Interval: {minutes} minute(s)\n\n"
+            group_title = group.get('title', f"Group {group['group_id']}")
+            groups_message += f"🔹 **{group_title}**\n"
+            groups_message += f"   ID: `{group['group_id']}`\n\n"
             
             keyboard.append([
-                Button.inline(f"⚙️ Group {group['group_id']}", data=f"group_action_manage_{group['group_id']}")
+                Button.inline(f"⚙️ {group_title}", data=f"group_action_manage_{group['group_id']}")
             ])
 
-        keyboard.append([Button.inline("➕ Add New Group", data="group_action_add")])
+        keyboard.append([
+            Button.inline("➕ Add New Group", data="group_action_add"),
+            Button.inline("📥 Bulk Add", data="group_action_bulk_add")
+        ])
         await event.reply(groups_message, buttons=keyboard)
 
     async def remove_group_command(self, event):
@@ -608,34 +929,6 @@ class GroupHandler(BaseHandler):
 
         await event.reply(
             "Select a group to remove:",
-            buttons=keyboard
-        )
-
-    async def set_interval_command(self, event):
-        """Enhanced set interval command handler"""
-        user_id = event.sender_id
-        if not await self.check_registered(user_id):
-            await self.show_error(event, "You are not registered. Use /register first.")
-            return
-
-        groups = await self.get_user_groups(user_id)
-        if not groups:
-            await self.show_error(event, "You don't have any groups to update.")
-            return
-
-        keyboard = []
-        for group in groups:
-            minutes = group['interval'] // 60
-            keyboard.append([
-                Button.inline(
-                    f"⏱️ Group {group['group_id']} ({minutes}min)", 
-                    data=f"group_action_update_interval_{group['group_id']}"
-                )
-            ])
-        keyboard.append([Button.inline("❌ Cancel", data="group_action_cancel")])
-
-        await event.reply(
-            "Select a group to update its interval:",
             buttons=keyboard
         )
 
@@ -685,3 +978,48 @@ class GroupHandler(BaseHandler):
         except Exception as e:
             logger.error(f"Error removing group: {e}")
             return False
+
+    async def resolve_username_to_id(self, username: str) -> int:
+        """Resolve a username to a group/channel ID"""
+        try:
+            # Use any available client to resolve the username
+            for user_id, client in self.user_clients.items():
+                if not client:
+                    continue
+                    
+                try:
+                    # Ensure client is connected
+                    if not client.is_connected():
+                        await client.connect()
+                        
+                    if not await client.is_user_authorized():
+                        continue
+                    
+                    # Try to get entity by username
+                    entity = await client.get_entity(username)
+                    
+                    # Check if it's a group or channel
+                    if hasattr(entity, 'id') and (hasattr(entity, 'megagroup') or hasattr(entity, 'broadcast')):
+                        # Convert to the proper group ID format
+                        group_id = entity.id
+                        if hasattr(entity, 'megagroup') and entity.megagroup:
+                            # Supergroup - make it negative
+                            group_id = -1000000000000 - entity.id
+                        elif hasattr(entity, 'broadcast') and entity.broadcast:
+                            # Channel - make it negative
+                            group_id = -1000000000000 - entity.id
+                        else:
+                            # Regular group - make it negative
+                            group_id = -entity.id
+                            
+                        return group_id
+                        
+                except Exception as e:
+                    logger.debug(f"Failed to resolve username {username} with client {user_id}: {e}")
+                    continue
+                    
+            return None
+            
+        except Exception as e:
+            logger.error(f"Error resolving username {username}: {e}")
+            return None
