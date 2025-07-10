@@ -1,6 +1,18 @@
 # Auto Message Forwarder Bot
 
-A powerful Telegram bot that automates message forwarding to multiple groups with advanced group management, bulk operations, and comprehensive user-friendly features.
+🚀 Auto Message Forwarder Bot
+
+Automatically send your messages to multiple Telegram groups at once!
+
+✅ Forward any message to up to 10 groups instantly
+✅ Save time by avoiding manual copy-paste  
+✅ Queue multiple messages for bulk forwarding
+✅ Set automatic forwarding with custom delays
+✅ Perfect for content creators and marketers
+
+No more sending the same message repeatedly!
+
+Start with /register to begin.
 
 ## Key Features
 
@@ -26,8 +38,8 @@ A powerful Telegram bot that automates message forwarding to multiple groups wit
 ### Group Management
 - `/addgroup` - Add a single group with interactive validation
 - `/bulkaddgroups` - Add multiple groups (up to 10) in one operation
-- `/mygroups` - View and manage all configured groups
-- `/removegroup` - Remove groups with confirmation prompts
+- `/mygroups` - View and manage all configured groups with friendly names
+- `/removegroup` - Remove groups with user-friendly names and confirmation prompts
 
 ### Message Forwarding
 - `/fwd` - Reply to any message to start forwarding with interval selection
@@ -58,12 +70,21 @@ A powerful Telegram bot that automates message forwarding to multiple groups wit
 
 ## Group Input Formats
 
-The bot supports multiple ways to add groups for maximum flexibility:
+The bot supports 3 simple ways to add groups:
 
 ### Single Group Addition (`/addgroup`)
-- **Group ID**: `-1001234567890` (recommended for private groups)
-- **Username**: `@mygroupname` or `mygroupname` (for public groups)
-- **t.me Links**: `t.me/mygroupname` or `https://t.me/mygroupname`
+**Option 1: Send Username**
+- Example: `@mygroupname`
+- Works for public groups
+
+**Option 2: Send t.me Link**
+- Example: `https://t.me/mygroupname`
+- Works for public groups
+
+**Option 3: Send Group ID**
+- Get ID from @username_to_id_bot
+- Example: `-1001234567890`
+- Works for all groups (public & private)
 
 ### Bulk Group Addition (`/bulkaddgroups`)
 Add up to 10 groups in one operation with mixed formats:
@@ -77,6 +98,7 @@ technews
 
 ### Features of Group Management
 - ✅ **Automatic Validation** - Checks permissions and access before adding
+- ✅ **User-Friendly Names** - Shows group titles instead of confusing IDs
 - ✅ **Duplicate Prevention** - Prevents adding the same group twice
 - ✅ **Error Reporting** - Clear feedback on what succeeded or failed
 - ✅ **Username Resolution** - Automatically converts usernames to group IDs

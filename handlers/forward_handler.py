@@ -128,9 +128,9 @@ class ForwardHandler(BaseHandler):
             "message_id": f"{int(time.time())}_{hash(reply_msg.text) % 10000}"
         }
 
-        await self.show_group_selection(event, user_id, groups)
+        await self.show_group_selection(event, user_id, groups, is_initial=True)
 
-    async def show_group_selection(self, event, user_id, groups):
+    async def show_group_selection(self, event, user_id, groups, is_initial=False):
         """Show enhanced group selection UI"""
         message = (
             "📤 **Forward Message**\n\n"
@@ -140,9 +140,11 @@ class ForwardHandler(BaseHandler):
         )
 
         keyboard = []
+        selected_groups = self.pending_forwards[user_id]['selected_groups']
+        
         for group in groups:
             group_title = group.get('title', f"Group {group['group_id']}")
-            selected = "☑" if str(group['group_id']) in self.pending_forwards[user_id]['selected_groups'] else "☐"
+            selected = "☑" if str(group['group_id']) in selected_groups else "☐"
             keyboard.append([
                 Button.inline(
                     f"{selected} {group_title}",
@@ -150,15 +152,28 @@ class ForwardHandler(BaseHandler):
                 )
             ])
 
+        # Check if all groups are selected
+        all_selected = len(selected_groups) == len(groups) and len(groups) > 0
+        select_button_text = "❌ Unselect All" if all_selected else "✅ Select All"
+        select_button_data = "forward_unselect_all" if all_selected else "forward_select_all"
+
         keyboard.extend([
-            [Button.inline("✅ Select All", data="forward_select_all")],
+            [Button.inline(select_button_text, data=select_button_data)],
             [
                 Button.inline("✅ Next", data="forward_set_interval"),
                 Button.inline("❌ Cancel", data="forward_cancel")
             ]
         ])
 
-        await event.reply(message, buttons=keyboard)
+        # Use reply for initial call, edit for subsequent calls
+        if is_initial:
+            await event.reply(message, buttons=keyboard)
+        else:
+            try:
+                await event.edit(message, buttons=keyboard)
+            except Exception as e:
+                # If edit fails (e.g., message too old), send a new message
+                await event.reply(message, buttons=keyboard)
 
     async def handle_interval_input(self, event):
         """Handle custom interval input"""
@@ -295,6 +310,11 @@ class ForwardHandler(BaseHandler):
             forward_data["selected_groups"] = [str(g["group_id"]) for g in groups]
             await self.show_group_selection(event, user_id, groups)
 
+        elif data == "unselect_all":
+            groups = await self.get_user_groups(user_id)
+            forward_data["selected_groups"] = []
+            await self.show_group_selection(event, user_id, groups)
+
         elif data == "set_interval":
             if not forward_data["selected_groups"]:
                 await self.show_error(event, "Please select at least one group first.")
@@ -330,7 +350,18 @@ class ForwardHandler(BaseHandler):
                 )
             else:
                 minutes = int(interval)
-                await self.start_forwarding(event, user_id, forward_data, minutes)
+                await self.start_forwarding(user_id, forward_data, minutes)
+                
+                # Show success message
+                keyboard = [
+                    [Button.inline("📊 View Status", data="forward_status")],
+                    [Button.inline("📤 Forward Another", data="forward_new")]
+                ]
+                success_msg = (
+                    f"✅ Message scheduled for forwarding every {minutes} minutes!\n"
+                    "Use /status to monitor forwarding progress."
+                )
+                await event.edit(success_msg, buttons=keyboard)
 
         elif data == "cancel":
             del self.pending_forwards[user_id]

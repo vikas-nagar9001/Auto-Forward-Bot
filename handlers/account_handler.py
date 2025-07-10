@@ -259,11 +259,16 @@ class AccountHandler(BaseHandler):
 
                 keyboard = [
                     [Button.inline("➕ Add First Group", data="group_action_add")],
-                    [Button.inline("👤 View Account", data="account_action_view")]
+                    [Button.inline("� Add Bulk Groups", data="group_action_bulk_add")],
+                    [Button.inline("�👤 View Account", data="account_action_view")]
                 ]
                 await event.reply(
                     f"✅ Successfully registered as {username}!\n\n"
-                    "What would you like to do next?",
+                    "🎉 Welcome to Auto Message Forwarder!\n\n"
+                    "To start forwarding messages, you need to add some groups first:\n\n"
+                    "• **Add First Group**: Add one group step by step\n"
+                    "• **Add Bulk Groups**: Add multiple groups at once (up to 10)\n\n"
+                    "What would you like to do?",
                     buttons=keyboard
                 )
                 
@@ -308,9 +313,9 @@ class AccountHandler(BaseHandler):
             )
             return
 
-        await self.show_account_details(event, user)
+        await self.show_account_details(event, user, is_command=True)
 
-    async def show_account_details(self, event, user):
+    async def show_account_details(self, event, user, is_command=False):
         """Show account details with active forwards count"""
         groups = await self.get_user_groups(user["user_id"])
         registered_date = await self.format_time_ago(user.get('registered_at', time.time()))
@@ -347,7 +352,15 @@ class AccountHandler(BaseHandler):
             [Button.inline("🗑️ Unregister", data="account_action_unregister")]
         ]
 
-        await event.edit(account_info, buttons=keyboard)
+        # Use reply for direct commands, edit for callbacks
+        if is_command:
+            await event.reply(account_info, buttons=keyboard)
+        else:
+            try:
+                await event.edit(account_info, buttons=keyboard)
+            except Exception as e:
+                # If edit fails, fall back to reply
+                await event.reply(account_info, buttons=keyboard)
 
     async def account_action_callback(self, event):
         """Handle account action callbacks"""
@@ -372,7 +385,7 @@ class AccountHandler(BaseHandler):
         elif data == "view":
             user = await self.check_registered(user_id)
             if user:
-                await self.show_account_details(event, user)
+                await self.show_account_details(event, user, is_command=False)
             else:
                 keyboard = [[Button.inline("📝 Register Now", data="account_action_retry_register")]]
                 await event.edit(
@@ -401,7 +414,7 @@ class AccountHandler(BaseHandler):
                 self.pending_registrations.remove(user_id)
             user = await self.check_registered(user_id)
             if user:
-                await self.show_account_details(event, user)
+                await self.show_account_details(event, user, is_command=False)
             else:
                 await event.edit("❌ Update cancelled.")
 

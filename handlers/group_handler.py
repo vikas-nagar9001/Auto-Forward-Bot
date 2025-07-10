@@ -134,18 +134,19 @@ class GroupHandler(BaseHandler):
 
         instructions = (
             "➕ **Add a New Group**\n\n"
-            "Let's add a group step by step:\n\n"
-            "1️⃣ First, join the group with session account\n"
-            "2️⃣ Get the group ID or username:\n"
-            "   • Group ID: Forward a message from the group to @username_to_id_bot\n"
-            "   • Username: Copy the group username (e.g., @mygroupname)\n"
-            "   • From invite link: Use the ID after 't.me/+' or 'joinchat/'\n\n"
-            "3️⃣ Send the group ID or username here\n\n"
-            "*Send the group ID (e.g., -1001234567890) or username (e.g., @mygroupname) now:*"
+            "Choose how to add your group:\n\n"
+            "**Option 1: Send Username**\n"
+            "• Example: `@mygroupname`\n\n"
+            "**Option 2: Send t.me Link**\n"
+            "• Example: `https://t.me/mygroupname`\n\n"
+            "**Option 3: Send Group ID**\n"
+            "• Get ID from @username_to_id_bot\n"
+            "• Example: `-1001234567890`\n\n"
+            "*Send your group username, link, or ID:*"
         )
 
         keyboard = [
-            [Button.inline("❓ How to Get Group ID/Username", data="group_action_help_id")],
+            [Button.inline("❓ How to Add Groups", data="group_action_help_id")],
             [Button.inline("❌ Cancel", data="group_action_cancel")]
         ]
         await event.reply(instructions, buttons=keyboard)
@@ -630,18 +631,19 @@ class GroupHandler(BaseHandler):
                 
                 instructions = (
                     "➕ **Add a New Group**\n\n"
-                    "Let's add a group step by step:\n\n"
-                    "1️⃣ First, join the group with session account\n"
-                    "2️⃣ Get the group ID or username:\n"
-                    "   • **Group ID**: Forward a message from the group to @username_to_id_bot\n"
-                    "   • **Username**: Use the group's public username (e.g., @mygroupname)\n"
-                    "   • **From invite link**: Use the ID after 't.me/+' or 'joinchat/'\n\n"
-                    "3️⃣ Send the group ID or username here\n\n"
-                    "*Send the group ID or username now, or use the buttons below:*"
+                    "Choose how to add your group:\n\n"
+                    "**Option 1: Send Username**\n"
+                    "• Example: `@mygroupname`\n\n"
+                    "**Option 2: Send t.me Link**\n"
+                    "• Example: `https://t.me/mygroupname`\n\n"
+                    "**Option 3: Send Group ID**\n"
+                    "• Get ID from @username_to_id_bot\n"
+                    "• Example: `-1001234567890`\n\n"
+                    "*Send your group username, link, or ID:*"
                 )
 
                 keyboard = [
-                    [Button.inline("❓ How to Get Group ID/Username", data="group_action_help_id")],
+                    [Button.inline("❓ How to Add Groups", data="group_action_help_id")],
                     [Button.inline("❌ Cancel", data="group_action_cancel")]
                 ]
                 await event.edit(instructions, buttons=keyboard)
@@ -691,17 +693,21 @@ class GroupHandler(BaseHandler):
 
                 instructions = (
                     "➕ **Add a New Group**\n\n"
-                    "Let's add a group step by step:\n\n"
-                    "1️⃣ First, join the group with session account\n"
-                    "2️⃣ Get the group ID or username:\n"
-                    "   • **Group ID**: Forward a message from the group to @username_to_id_bot\n"
-                    "   • **Username**: Use the group's public username (e.g., @mygroupname)\n"
-                    "   • **From invite link**: Use the ID after 't.me/+' or 'joinchat/'\n\n"
-                    "3️⃣ Send the group ID or username here\n\n"
-                    "*Send the group ID or username now, or use the buttons below:*"
+                    "Choose how to add your group:\n\n"
+                    "**Option 1: Send Username**\n"
+                    "• Example: `@mygroupname`\n\n"
+                    "**Option 2: Send t.me Link**\n"
+                    "• Example: `https://t.me/mygroupname`\n\n"
+                    "**Option 3: Send Group ID**\n"
+                    "• Get ID from @username_to_id_bot\n"
+                    "• Example: `-1001234567890`\n\n"
+                    "*Send your group username, link, or ID:*"
                 )
 
-                keyboard = [[Button.inline("❌ Cancel", data="group_action_cancel")]]
+                keyboard = [
+                    [Button.inline("❓ How to Add Groups", data="group_action_help_id")],
+                    [Button.inline("❌ Cancel", data="group_action_cancel")]
+                ]
                 await event.edit(instructions, buttons=keyboard)
 
             elif data == "bulk_add":
@@ -749,12 +755,18 @@ class GroupHandler(BaseHandler):
 
             elif data.startswith("remove_"):
                 group_id = int(data.replace("remove_", ""))
+                # Get group details to show title
+                group = await self.get_group(user_id, group_id)
+                group_title = group.get('title', f"Group {group_id}") if group else f"Group {group_id}"
+                
                 keyboard = [
                     [Button.inline("⚠️ Yes, Remove", data=f"group_action_confirm_remove_{group_id}")],
                     [Button.inline("❌ No, Keep", data=f"group_action_manage_{group_id}")]
                 ]
                 await event.edit(
-                    f"⚠️ **Remove Group {group_id}**\n\n"
+                    f"⚠️ **Remove Group**\n\n"
+                    f"**Group:** {group_title}\n"
+                    f"**ID:** `{group_id}`\n\n"
                     "Are you sure you want to remove this group?\n"
                     "All active forwards to this group will be stopped.",
                     buttons=keyboard
@@ -762,13 +774,19 @@ class GroupHandler(BaseHandler):
 
             elif data.startswith("confirm_remove_"):
                 group_id = int(data.replace("confirm_remove_", ""))
+                # Get group details before removing
+                group = await self.get_group(user_id, group_id)
+                group_title = group.get('title', f"Group {group_id}") if group else f"Group {group_id}"
+                
                 if await self.remove_group(user_id, group_id):
                     keyboard = [
                         [Button.inline("👥 View Groups", data="group_action_view")],
                         [Button.inline("➕ Add New Group", data="group_action_add")]
                     ]
                     await event.edit(
-                        "✅ Group removed successfully!",
+                        f"✅ **Group Removed Successfully!**\n\n"
+                        f"**{group_title}** has been removed from your list.\n"
+                        f"All active forwards to this group have been stopped.",
                         buttons=keyboard
                     )
                 else:
@@ -776,16 +794,18 @@ class GroupHandler(BaseHandler):
 
             elif data == "help_id":
                 help_text = (
-                    "❓ **How to Get Group ID or Username**\n\n"
-                    "**Option 1: Group ID (Recommended)**\n"
+                    "❓ **How to Add Groups**\n\n"
+                    "**Method 1: Username (Easiest)**\n"
+                    "• Send: `@mygroupname`\n"
+                    "• Works for public groups only\n\n"
+                    "**Method 2: t.me Link**\n"
+                    "• Send: `https://t.me/mygroupname`\n"
+                    "• Works for public groups only\n\n"
+                    "**Method 3: Group ID**\n"
                     "• Forward any message from your group to @username_to_id_bot\n"
-                    "• Copy the negative number (e.g., -1001234567890)\n\n"
-                    "**Option 2: Public Username**\n"
-                    "• Use the group's public username: @mygroupname\n"
-                    "• Or just the username: mygroupname\n\n"
-                    "**Option 3: From Public Link**\n"
-                    "• Extract username from t.me/mygroupname\n\n"
-                    "**Note:** Private groups (t.me/+...) require Group ID method."
+                    "• Copy the ID (e.g., -1001234567890)\n"
+                    "• Works for all groups (public & private)\n\n"
+                    "**Note:** You must be a member of the group first!"
                 )
                 keyboard = [
                     [Button.inline("« Back", data="group_action_retry")],
@@ -921,14 +941,17 @@ class GroupHandler(BaseHandler):
 
         keyboard = []
         for group in groups:
+            # Use group title if available, otherwise use group ID
+            group_title = group.get('title', f"Group {group['group_id']}")
             keyboard.append([
-                Button.inline(f"🗑️ Remove Group {group['group_id']}", 
+                Button.inline(f"🗑️ {group_title}", 
                             data=f"group_action_remove_{group['group_id']}")
             ])
         keyboard.append([Button.inline("❌ Cancel", data="group_action_cancel")])
 
         await event.reply(
-            "Select a group to remove:",
+            "🗑️ **Remove Group**\n\n"
+            "Select a group to remove from your list:",
             buttons=keyboard
         )
 
