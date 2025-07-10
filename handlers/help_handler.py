@@ -89,6 +89,9 @@ class HelpHandler(BaseHandler):
                 Button.inline("📊 Status & Settings", data="help_category_status"),
                 Button.inline("❓ FAQ", data="help_category_faq")
             ],
+            [
+                Button.inline("🔐 Session Issues", data="help_category_sessions")
+            ],
             [Button.inline("🔍 Search Help", data="help_category_search")]
         ]
 
@@ -243,6 +246,26 @@ class HelpHandler(BaseHandler):
                     '• Check status with /status\n'
                     '• Stop forwards with /stopfwd\n'
                     '• View groups with /mygroups'
+                )
+            elif category == 'sessions':
+                text = (
+                    '🔐 **Session Troubleshooting**\n\n'
+                    '**Common Session Issues:**\n\n'
+                    '❌ **Session Expired**\n'
+                    '• Happens when you login from another device\n'
+                    '• Solution: Use /register to update session\n\n'
+                    '❌ **Session Invalid**\n'
+                    '• Can occur after IP address changes\n'
+                    '• Solution: Generate new session string\n\n'
+                    '❌ **Authorization Failed**\n'
+                    '• Session may be corrupted\n'
+                    '• Solution: Get fresh session from @SessionStringZBot\n\n'
+                    '🔄 **How to Fix:**\n'
+                    '1️⃣ Go to @SessionStringZBot\n'
+                    '2️⃣ Generate new Telethon session\n'
+                    '3️⃣ Use /register command here\n'
+                    '4️⃣ Paste your new session string\n\n'
+                    '⚠️ **Important:** Keep your session string private!'
                 )
             else:
                 text = '❌ Invalid help category selected'

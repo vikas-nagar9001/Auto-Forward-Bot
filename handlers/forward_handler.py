@@ -113,6 +113,10 @@ class ForwardHandler(BaseHandler):
             await self.show_error(event, "You are not registered. Use /register first.")
             return
 
+        # Validate session before proceeding
+        if not await self.require_valid_session(event, user_id, self.user_clients, "message forwarding"):
+            return
+
         if not event.is_reply:
             keyboard = [
                 [Button.inline("📋 How to Forward", data="help_category_forward")],
@@ -483,6 +487,34 @@ class ForwardHandler(BaseHandler):
             
             logger.info(f"Sending immediate forward for message {message_id} to {len(group_ids)} groups")
             
+            # Validate session before sending
+            is_valid, error_msg = await self.validate_user_session(user_id, self.user_clients)
+            if not is_valid:
+                logger.error(f"Session validation failed during immediate forward for user {user_id}: {error_msg}")
+                
+                # Clean up the forwarding data since session is invalid
+                await self.cleanup_user_forwards_on_session_error(user_id)
+                
+                # Notify user about session issue
+                try:
+                    user = self.users_collection.find_one({"user_id": user_id})
+                    if user:
+                        await self.bot.send_message(
+                            user_id,
+                            f"❌ **Forwarding Failed - Session Issue**\n\n"
+                            f"Message: `{self.get_message_preview(message_data['message'])}`\n\n"
+                            f"{error_msg}\n\n"
+                            "❌ **All your active forwards have been stopped and removed due to session issues.**\n\n"
+                            "Please update your session and set up forwarding again.",
+                            buttons=[
+                                [Button.inline("🔄 Update Session", data="account_action_update_session")],
+                                [Button.inline("❓ Session Help", data="help_category_sessions")]
+                            ]
+                        )
+                except Exception as notify_error:
+                    logger.error(f"Failed to notify user {user_id} about session error: {notify_error}")
+                return
+            
             # Use batched sending to avoid rate limiting
             successful, failed = await self.send_message_to_groups_batched(user_id, message_data, group_ids)
             
@@ -518,6 +550,47 @@ class ForwardHandler(BaseHandler):
                 
                 logger.info(f"Scheduled forward time reached for message {message_id} of user {user_id}")
                 
+                # Validate session before sending
+                is_valid, error_msg = await self.validate_user_session(user_id, self.user_clients)
+                if not is_valid:
+                    logger.error(f"Session validation failed during scheduled forward for user {user_id}: {error_msg}")
+                    
+                    # Clean up this specific message from forwarding list
+                    if user_id in self.messages_to_forward:
+                        self.messages_to_forward[user_id] = [
+                            msg for msg in self.messages_to_forward[user_id] 
+                            if msg["message_id"] != message_id
+                        ]
+                        # If no more messages for this user, clean up the user entry
+                        if not self.messages_to_forward[user_id]:
+                            del self.messages_to_forward[user_id]
+                    
+                    # Clean up the task reference
+                    if user_id in self.forwarding_tasks and message_id in self.forwarding_tasks[user_id]:
+                        del self.forwarding_tasks[user_id][message_id]
+                        # If no more tasks for this user, cleanup the user entry
+                        if not self.forwarding_tasks[user_id]:
+                            del self.forwarding_tasks[user_id]
+                    
+                    # Notify user about session issue and inform that forward has been removed
+                    try:
+                        await self.bot.send_message(
+                            user_id,
+                            f"⚠️ **Scheduled Forward Stopped - Session Issue**\n\n"
+                            f"Message: `{self.get_message_preview(message_data['message'])}`\n\n"
+                            f"{error_msg}\n\n"
+                            "❌ **This message's forwarding has been permanently stopped and removed from your active forwards.**\n\n"
+                            "Please update your session and set up forwarding again for this message.",
+                            buttons=[
+                                [Button.inline("🔄 Update Session", data="account_action_update_session")],
+                                [Button.inline("❓ Session Help", data="help_category_sessions")],
+                                [Button.inline("📊 Check Status", data="status_view_messages")]
+                            ]
+                        )
+                    except Exception as notify_error:
+                        logger.error(f"Failed to notify user {user_id} about session error: {notify_error}")
+                    break  # Stop this forwarding task
+                
                 # Use batched sending to avoid rate limiting
                 successful, failed = await self.send_message_to_groups_batched(user_id, message_data, group_ids)
                 
@@ -541,10 +614,16 @@ class ForwardHandler(BaseHandler):
     async def send_message_to_groups_batched(self, user_id: int, message_data: dict, group_ids: list):
         """Send message to groups in batches to avoid rate limiting"""
         try:
+            # Validate session before sending
+            is_valid, error_msg = await self.validate_user_session(user_id, self.user_clients)
+            if not is_valid:
+                logger.error(f"Session validation failed for user {user_id} during forwarding: {error_msg}")
+                return 0, len(group_ids)
+            
             client = self.user_clients.get(user_id)
             if not client or not client.is_connected():
                 logger.warning(f"Client not available for batched sending for user {user_id}")
-                return
+                return 0, len(group_ids)
             
             message_id = message_data["message_id"]
             total_groups = len(group_ids)
@@ -691,3 +770,32 @@ class ForwardHandler(BaseHandler):
             f"• {self.BATCH_DELAY} second delay between batches\n"
             f"• Total sending time: ~{total_time} seconds"
         )
+
+    async def cleanup_user_forwards_on_session_error(self, user_id: int):
+        """Clean up all forwarding data when user's session becomes invalid"""
+        try:
+            # Cancel all forwarding tasks for this user
+            if user_id in self.forwarding_tasks:
+                for message_id, task in self.forwarding_tasks[user_id].items():
+                    task.cancel()
+                    logger.info(f"Cancelled task for message {message_id} due to session error for user {user_id}")
+                del self.forwarding_tasks[user_id]
+            
+            # Clear all messages from forwarding list
+            if user_id in self.messages_to_forward:
+                message_count = len(self.messages_to_forward[user_id])
+                del self.messages_to_forward[user_id]
+                logger.info(f"Cleared {message_count} forwarding messages for user {user_id} due to session error")
+            
+            # Clear any pending forwards
+            if user_id in self.pending_forwards:
+                del self.pending_forwards[user_id]
+                logger.info(f"Cleared pending forward for user {user_id} due to session error")
+                
+            # Clear last forward times
+            if user_id in self.last_forward_time:
+                del self.last_forward_time[user_id]
+                logger.info(f"Cleared forward time tracking for user {user_id} due to session error")
+                
+        except Exception as e:
+            logger.error(f"Error cleaning up forwards for user {user_id}: {e}")

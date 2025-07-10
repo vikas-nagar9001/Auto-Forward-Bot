@@ -22,7 +22,7 @@ class Config:
 
     # MongoDB Config (Required)
     MONGO_URI = None  # Add your MONGO_URI here if not using env var
-    DB_NAME = 'auto_forward_bot2'
+    DB_NAME = 'auto_forward_bot'
     USERS_COLLECTION = 'users'
     GROUPS_COLLECTION = 'groups'
 

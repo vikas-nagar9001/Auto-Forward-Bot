@@ -51,22 +51,15 @@ class GroupHandler(BaseHandler):
     async def validate_group_id(self, user_id: int, group_id: int) -> tuple[bool, str]:
         """Validate if a group ID is valid and bot has proper permissions"""
         try:
+            # Use the new session validation method
+            is_valid, error_msg = await self.validate_user_session(user_id, self.user_clients)
+            if not is_valid:
+                return False, error_msg
+
             client = self.user_clients.get(user_id)
             if not client:
                 logger.error(f"No client found for user {user_id}")
                 return False, "You are not properly registered. Please /register first."
-
-            # Ensure client is connected
-            if not client.is_connected():
-                await client.connect()
-                
-            if not await client.is_user_authorized():
-                await client.disconnect()
-                logger.error(f"Client authorization failed for user {user_id}")
-                # Remove invalid client
-                if user_id in self.user_clients:
-                    del self.user_clients[user_id]
-                return False, "Session expired or invalid. Please use /register to update your session."
 
             # Try to get group info
             chat = await client.get_entity(group_id)
@@ -126,6 +119,10 @@ class GroupHandler(BaseHandler):
             await self.show_error(event, "You are not registered. Use /register first.")
             return
 
+        # Validate session before proceeding
+        if not await self.require_valid_session(event, user_id, self.user_clients, "adding groups"):
+            return
+
         # Start group addition process
         self.pending_group_actions[user_id] = {
             "action": "add",
@@ -156,6 +153,10 @@ class GroupHandler(BaseHandler):
         user_id = event.sender_id
         if not await self.check_registered(user_id):
             await self.show_error(event, "You are not registered. Use /register first.")
+            return
+
+        # Validate session before proceeding
+        if not await self.require_valid_session(event, user_id, self.user_clients, "bulk adding groups"):
             return
 
         # Start bulk group addition process
@@ -203,6 +204,20 @@ class GroupHandler(BaseHandler):
         
         # Skip if no pending action or if message starts with a command
         if user_id not in self.pending_group_actions or event.text.startswith('/'):
+            return
+
+        # Validate session before processing group input
+        is_valid, error_msg = await self.validate_user_session(user_id, self.user_clients)
+        if not is_valid:
+            # Clear pending action since session is invalid
+            if user_id in self.pending_group_actions:
+                del self.pending_group_actions[user_id]
+            
+            await self.show_session_error(
+                event, 
+                f"{error_msg}\n\n**Operation:** Adding group\n\n"
+                "Please update your session and try adding the group again."
+            )
             return
 
         action_data = self.pending_group_actions[user_id]
@@ -621,6 +636,12 @@ class GroupHandler(BaseHandler):
             if not await self.check_registered(user_id):
                 await self.show_error(event, "You are not registered. Use /register first.")
                 return
+
+            # Add session validation for group operations that require user client
+            if data in ["add", "bulk_add", "retry", "bulk_retry"]:
+                # Validate session before proceeding with group operations
+                if not await self.require_valid_session(event, user_id, self.user_clients, "group management"):
+                    return
 
             if data == "retry":
                 # Reset group addition process
