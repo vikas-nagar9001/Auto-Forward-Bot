@@ -69,10 +69,19 @@ async def init_handlers():
             await handler.register_handlers()
             logger.info(f"Registered handler: {handler.__class__.__name__}")
         
-        # Initialize any active forwards from database
+        # Initialize user clients first (required for forwarding)
+        await account_handler.initialize_user_clients()
+        
+        # Set account handler reference in forward handler for debugging
+        forward_handler.set_account_handler(account_handler)
+        
+        # Initialize any active forwards from database after user clients are ready
         await forward_handler.initialize_active_forwards()
         
         logger.info("All handlers registered successfully")
+        
+        # Return account_handler for cleanup later
+        return account_handler
     except Exception as e:
         logger.error(f"Error initializing handlers: {e}")
         raise
@@ -89,7 +98,7 @@ async def bot_main():
         groups_collection.create_index(["user_id", "group_id"], unique=True)
         
         # Initialize handlers
-        await init_handlers()
+        account_handler = await init_handlers()
         
         # Send startup notification to admin if configured
         if config.ADMIN_ID:
@@ -111,6 +120,17 @@ async def bot_main():
     except Exception as e:
         logger.error(f"Error in bot_main: {e}")
         raise
+    finally:
+        # Cleanup user clients on shutdown
+        await cleanup_clients(account_handler)
+
+async def cleanup_clients(account_handler):
+    """Clean up all user clients to prevent asyncio warnings"""
+    try:
+        if account_handler:
+            await account_handler.cleanup_user_clients()
+    except Exception as e:
+        logger.error(f"Error during cleanup: {e}")
 
 def run_flask():
     """Run the Flask app in a separate thread"""

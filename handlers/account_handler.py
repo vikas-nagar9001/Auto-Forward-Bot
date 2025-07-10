@@ -22,32 +22,46 @@ class AccountHandler(BaseHandler):
         """Initialize user clients from database on bot startup"""
         try:
             all_users = list(self.users_collection.find({}))
+            logger.info(f"Found {len(all_users)} users in database")
+            
             for user in all_users:
                 user_id = user['user_id']
-                session_string = user['session_string']
+                session_string = user.get('session_string')
+                
+                if not session_string:
+                    logger.warning(f"User {user_id} has no session string, skipping")
+                    continue
+                
+                logger.info(f"Initializing client for user {user_id}")
                 
                 # Create and connect client
                 client, error = await self.create_user_client(user_id, session_string)
                 if client and not error:
+                    logger.info(f"Client created successfully for user {user_id}")
+                    
                     if not client.is_connected():
+                        logger.info(f"Connecting client for user {user_id}")
                         await client.connect()
                     
                     if await client.is_user_authorized():
                         self.user_clients[user_id] = client
-                        logger.info(f"Successfully initialized client for user {user_id}")
+                        logger.info(f"Successfully initialized and stored client for user {user_id}")
                     else:
                         logger.error(f"Client authorization failed for user {user_id}")
+                        await client.disconnect()
                 else:
-                    logger.error(f"Failed to initialize client for user {user_id}: {error}")
+                    logger.error(f"Failed to create client for user {user_id}: {error}")
             
             logger.info(f"Initialized {len(self.user_clients)} user clients")
+            logger.info(f"User clients dictionary contains: {list(self.user_clients.keys())}")
         except Exception as e:
             logger.error(f"Error initializing user clients: {e}")
+            import traceback
+            logger.error(f"Traceback: {traceback.format_exc()}")
 
     async def register_handlers(self):
         """Register all account-related command handlers"""
-        # Initialize user clients first
-        await self.initialize_user_clients()
+        # Note: initialize_user_clients is now called from main.py to ensure proper order
         
         # Register handlers
         self.bot.add_event_handler(
@@ -74,30 +88,45 @@ class AccountHandler(BaseHandler):
     async def create_user_client(self, user_id: int, session_string: str):
         """Create a Telethon client for a user"""
         try:
+            logger.info(f"Creating client for user {user_id}")
+            
             # Basic format validation
             if not session_string or len(session_string.strip()) < 100:
+                logger.error(f"Session string too short for user {user_id}: {len(session_string) if session_string else 0} chars")
                 return None, "Invalid session string format. The string appears too short - please make sure you copied the entire string."
             
             # Check for common invalid characters
             invalid_chars = ['<', '>', '"', "'", ' ']
             if any(char in session_string for char in invalid_chars):
+                logger.error(f"Session string contains invalid characters for user {user_id}")
                 return None, "The session string contains invalid characters. Please make sure you copied it correctly without any extra spaces or quotes."
             
             # Verify base64-like format (most session strings are base64)
             if not all(c in '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz-_=' for c in session_string):
+                logger.error(f"Session string contains non-base64 characters for user {user_id}")
                 return None, "The session string contains invalid characters. Please generate a new one using @SessionStringZBot."
-                
+            
+            logger.info(f"Creating TelegramClient for user {user_id}")
             client = TelegramClient(StringSession(session_string), self.api_id, self.api_hash)
+            
+            logger.info(f"Connecting client for user {user_id}")
             await client.connect()
             
+            logger.info(f"Checking authorization for user {user_id}")
             if not await client.is_user_authorized():
+                logger.error(f"Client not authorized for user {user_id}")
                 await client.disconnect()
                 return None, "Session is not authorized. Please generate a new session string using @SessionStringZBot."
-                
+            
+            logger.info(f"Client successfully created and authorized for user {user_id}")
             return client, None
-        except ValueError:
+        except ValueError as e:
+            logger.error(f"ValueError creating client for user {user_id}: {e}")
             return None, "Invalid session string format. Please make sure you copied the complete string without any extra spaces."
         except Exception as e:
+            logger.error(f"Exception creating client for user {user_id}: {e}")
+            import traceback
+            logger.error(f"Traceback: {traceback.format_exc()}")
             error_msg = str(e).lower()
             if "encoding" in error_msg or "decode" in error_msg:
                 return None, "The session string contains invalid characters. Please generate a new one."
@@ -457,3 +486,35 @@ class AccountHandler(BaseHandler):
                 )
             except Exception as e:
                 await self.handle_error(event, e, "Failed to unregister. Please try again.")
+
+    async def cleanup_user_clients(self):
+        """Cleanup all user clients to prevent asyncio warnings"""
+        try:
+            logger.info("Cleaning up user clients...")
+            for user_id, client in list(self.user_clients.items()):
+                try:
+                    if client.is_connected():
+                        await client.disconnect()
+                        logger.info(f"Disconnected client for user {user_id}")
+                except Exception as e:
+                    logger.error(f"Error disconnecting client for user {user_id}: {e}")
+            self.user_clients.clear()
+            logger.info("All user clients cleaned up")
+        except Exception as e:
+            logger.error(f"Error during client cleanup: {e}")
+
+    async def debug_user_existence(self, user_id: int):
+        """Debug method to check if user exists in database"""
+        try:
+            user = self.users_collection.find_one({"user_id": user_id})
+            if user:
+                logger.info(f"User {user_id} found in database:")
+                logger.info(f"  - Has session_string: {'session_string' in user and bool(user['session_string'])}")
+                logger.info(f"  - Client exists in user_clients: {user_id in self.user_clients}")
+                return True
+            else:
+                logger.warning(f"User {user_id} NOT found in database")
+                return False
+        except Exception as e:
+            logger.error(f"Error checking user existence: {e}")
+            return False

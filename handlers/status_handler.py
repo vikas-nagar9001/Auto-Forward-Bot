@@ -84,24 +84,28 @@ class StatusHandler(BaseHandler):
 
             for group_id in message["target_groups"]:
                 group = self.groups_collection.find_one({"user_id": user_id, "group_id": int(group_id)})
-                if group and "interval" in group:
-                    minutes = group["interval"] // 60
-                    last_time = self.forward_handler.last_forward_time.get(user_id, {}).get(
-                        int(group_id), {}).get(message["message_id"], 0)
-                    
-                    if last_time:
-                        time_ago = time.time() - last_time
-                        if time_ago < 60:
-                            time_str = "just now"
-                        elif time_ago < 3600:
-                            time_str = f"{int(time_ago/60)}m ago"
-                        else:
-                            time_str = f"{int(time_ago/3600)}h ago"
+                group_title = group.get('title', f"Group {group_id}") if group else f"Group {group_id}"
+                
+                # Get interval from message data (not from group)
+                interval_seconds = message.get("interval", 1800)  # Default 30 minutes
+                minutes = interval_seconds // 60
+                
+                last_time = self.forward_handler.last_forward_time.get(user_id, {}).get(
+                    message["message_id"], {}).get(int(group_id), 0)
+                
+                if last_time:
+                    time_ago = time.time() - last_time
+                    if time_ago < 60:
+                        time_str = "just now"
+                    elif time_ago < 3600:
+                        time_str = f"{int(time_ago/60)}m ago"
                     else:
-                        time_str = "never"
+                        time_str = f"{int(time_ago/3600)}h ago"
+                else:
+                    time_str = "never"
 
-                    details += f"• Group {group_id} (every {minutes}min)\n"
-                    details += f"  Last forwarded: {time_str}\n"
+                details += f"• {group_title} (every {minutes}min)\n"
+                details += f"  Last forwarded: {time_str}\n"
 
             keyboard = [
                 [Button.inline("🛑 Stop This Forward", data=f"forward_stop_{message_index}")],
@@ -131,31 +135,50 @@ class StatusHandler(BaseHandler):
             await event.edit(message_list, buttons=keyboard)
 
     async def show_schedules(self, event, user_id: int):
-        """Show forwarding schedules for all groups"""
-        groups = await self.get_user_groups(user_id)
-        if not groups:
-            await self.show_error(event, "No groups configured.")
+        """Show forwarding schedules for all active messages"""
+        messages = self.forward_handler.messages_to_forward.get(user_id, [])
+        if not messages:
+            await self.show_error(event, "No active forwarding messages.")
             return
 
         schedule_msg = "⏱️ **Forwarding Schedules**\n\n"
-        for group in groups:
-            if "interval" in group:
-                minutes = group["interval"] // 60
-                schedule_msg += f"🔹 **Group {group['group_id']}**\n"
-                schedule_msg += f"   Interval: Every {minutes} minutes\n"
-            else:
-                schedule_msg += f"🔹 **Group {group['group_id']}**\n"
-                schedule_msg += f"   Interval: Not set (will be set when forwarding starts)\n"
+        
+        for i, message in enumerate(messages, 1):
+            preview = self.forward_handler.get_message_preview(message["message"], 30)
+            interval_seconds = message.get("interval", 1800)
+            minutes = interval_seconds // 60
             
-            # Get active forwards for this group
-            active_forwards = sum(
-                1 for msg in self.forward_handler.messages_to_forward.get(user_id, [])
-                if str(group["group_id"]) in msg["target_groups"]
-            )
-            schedule_msg += f"   Active forwards: {active_forwards}\n\n"
+            schedule_msg += f"� **Message {i}**\n"
+            schedule_msg += f"   Preview: `{preview}`\n"
+            schedule_msg += f"   Interval: Every {minutes} minutes\n"
+            schedule_msg += f"   Target groups: {len(message['target_groups'])}\n"
+            
+            # Show group details
+            for group_id in message["target_groups"]:
+                group = self.groups_collection.find_one({"user_id": user_id, "group_id": int(group_id)})
+                group_title = group.get('title', f"Group {group_id}") if group else f"Group {group_id}"
+                
+                last_time = self.forward_handler.last_forward_time.get(user_id, {}).get(
+                    message["message_id"], {}).get(int(group_id), 0)
+                
+                if last_time:
+                    time_ago = time.time() - last_time
+                    next_forward = interval_seconds - time_ago
+                    if next_forward <= 0:
+                        next_str = "due now"
+                    elif next_forward < 60:
+                        next_str = f"in {int(next_forward)}s"
+                    else:
+                        next_str = f"in {int(next_forward/60)}m"
+                else:
+                    next_str = "starting soon"
+                
+                schedule_msg += f"     • {group_title} ({next_str})\n"
+            
+            schedule_msg += "\n"
 
         keyboard = [
-            [Button.inline("⏱️ Update Intervals", data="group_action_intervals")],
+            [Button.inline("📋 View Messages", data="status_view_messages")],
             [Button.inline("« Main Menu", data="status_main_menu")]
         ]
         await event.edit(schedule_msg, buttons=keyboard)
@@ -170,8 +193,9 @@ class StatusHandler(BaseHandler):
             
             if messages and groups:
                 total_forwards = 0
-                for group_id in self.forward_handler.last_forward_time.get(user_id, {}):
-                    total_forwards += len(self.forward_handler.last_forward_time[user_id][group_id])
+                # Count total forwards from the new structure
+                for message_id in self.forward_handler.last_forward_time.get(user_id, {}):
+                    total_forwards += len(self.forward_handler.last_forward_time[user_id][message_id])
 
                 stats_msg += f"📝 Active Messages: {len(messages)}\n"
                 stats_msg += f"👥 Total Groups: {len(groups)}\n"
@@ -179,16 +203,17 @@ class StatusHandler(BaseHandler):
                 
                 # Most active groups
                 group_forwards = {}
-                for group in groups:
-                    group_id = group["group_id"]
-                    count = len(self.forward_handler.last_forward_time.get(user_id, {}).get(group_id, {}))
-                    group_forwards[group_id] = count
+                for message_id in self.forward_handler.last_forward_time.get(user_id, {}):
+                    for group_id in self.forward_handler.last_forward_time[user_id][message_id]:
+                        group_forwards[group_id] = group_forwards.get(group_id, 0) + 1
                 
                 if group_forwards:
                     stats_msg += "🏆 Most Active Groups:\n"
                     sorted_groups = sorted(group_forwards.items(), key=lambda x: x[1], reverse=True)
                     for group_id, count in sorted_groups[:3]:
-                        stats_msg += f"• Group {group_id}: {count} forwards\n"
+                        group = self.groups_collection.find_one({"user_id": user_id, "group_id": group_id})
+                        group_title = group.get('title', f"Group {group_id}") if group else f"Group {group_id}"
+                        stats_msg += f"• {group_title}: {count} forwards\n"
 
             else:
                 stats_msg += "❌ No forwarding activity yet\n"

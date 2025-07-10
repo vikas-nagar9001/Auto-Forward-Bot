@@ -148,22 +148,12 @@ class KeyboardHandler(BaseHandler):
             )
 
         elif data == "intervals":
-            # Show interval management options
-            keyboard = [
-                [Button.inline(f"{mins}min", data=f"kb_set_interval_{mins}") 
-                 for mins in [30, 60, 120]]
-            ]
-            keyboard.extend([
-                [
-                    Button.inline("⚡️ Quick Set", data="group_action_quick_interval"),
-                    Button.inline("⏱️ Custom", data="group_action_custom_interval")
-                ],
-                [Button.inline("« Back", data="kb_main")]
-            ])
+            # Intervals are now set per-message during forwarding
             await event.edit(
                 "⏱️ **Interval Settings**\n\n"
-                "Choose an action:",
-                buttons=keyboard
+                "ℹ️ Intervals are now set per-message when you start forwarding.\n"
+                "Use /fwd to set up forwarding with custom intervals.",
+                buttons=[[Button.inline("« Back", data="kb_main")]]
             )
 
         elif data == "groups":
@@ -174,8 +164,8 @@ class KeyboardHandler(BaseHandler):
                     Button.inline("🗑️ Remove", data="group_action_remove")
                 ],
                 [
-                    Button.inline("⏱️ Intervals", data="group_action_intervals"),
-                    Button.inline("📊 Stats", data="group_action_stats")
+                    Button.inline("📊 Stats", data="group_action_stats"),
+                    Button.inline("➕ Add More", data="group_action_add")
                 ],
                 [Button.inline("« Back", data="kb_main")]
             ]

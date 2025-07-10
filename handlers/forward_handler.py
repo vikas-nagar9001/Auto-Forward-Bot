@@ -10,13 +10,23 @@ logger = logging.getLogger(__name__)
 class ForwardHandler(BaseHandler):
     """Handler for message forwarding functionality"""
     
+    # Batch sending configuration to avoid rate limiting
+    BATCH_SIZE = 4  # Send to 5 groups at a time
+    BATCH_DELAY = 4  # Wait 4 seconds between batches
+    MAX_CONCURRENT_SENDS = 1  # Maximum concurrent send operations per batch
+    
     def __init__(self, bot, users_collection, groups_collection, user_clients):
         super().__init__(bot, users_collection, groups_collection)
         self.user_clients = user_clients
-        self.messages_to_forward = {}
-        self.forwarding_tasks = {}
-        self.last_forward_time = {}
-        self.pending_forwards = {}  # {user_id: {"message": str, "step": str, "selected_groups": []}}
+        self.account_handler = None  # Will be set later
+        self.messages_to_forward = {}  # {user_id: [{"message": str, "target_groups": [], "message_id": str, "interval": int}]}
+        self.forwarding_tasks = {}  # {user_id: {message_id: task}}
+        self.last_forward_time = {}  # {user_id: {message_id: {group_id: timestamp}}}
+        self.pending_forwards = {}  # {user_id: {"message": str, "step": str, "selected_groups": [], "interval": int}}
+
+    def set_account_handler(self, account_handler):
+        """Set the account handler for debugging purposes"""
+        self.account_handler = account_handler
 
     async def register_handlers(self):
         """Register all forwarding-related handlers"""
@@ -48,6 +58,7 @@ class ForwardHandler(BaseHandler):
                 
                 # Skip if user client not available
                 if user_id not in self.user_clients:
+                    logger.info(f"Skipping active forwards for user {user_id} - no client available")
                     continue
                 
                 # Get user's active forwards from database
@@ -63,15 +74,29 @@ class ForwardHandler(BaseHandler):
                 # Initialize message forwarding for each active forward
                 self.messages_to_forward[user_id] = []
                 
+                # Initialize tasks dict for user
+                if user_id not in self.forwarding_tasks:
+                    self.forwarding_tasks[user_id] = {}
+                
                 for forward in active_forwards:
-                    self.messages_to_forward[user_id].append({
+                    message_data = {
                         "message": forward['message'],
+                        "message_obj": None,  # No message object available from database
                         "target_groups": forward['target_groups'],
-                        "message_id": forward['message_id']
-                    })
+                        "message_id": forward['message_id'],
+                        "interval": forward.get('interval', 1800)  # Default 30 minutes
+                    }
+                    
+                    self.messages_to_forward[user_id].append(message_data)
+                    
+                    # Create independent task for each message
+                    message_id = forward['message_id']
+                    task = asyncio.create_task(
+                        self.schedule_message_forwards(user_id, message_id, message_data)
+                    )
+                    self.forwarding_tasks[user_id][message_id] = task
+                    logger.info(f"Restored forwarding task for message {message_id} of user {user_id}")
 
-                # Start forwarding tasks
-                asyncio.create_task(self.schedule_forwards(user_id))
                 logger.info(f"Initialized {len(active_forwards)} forwards for user {user_id}")
 
             logger.info("Successfully initialized all active forwards")
@@ -120,9 +145,10 @@ class ForwardHandler(BaseHandler):
             )
             return
 
-        # Start forwarding process
+        # Start forwarding process - store the entire message object for formatting preservation
         self.pending_forwards[user_id] = {
             "message": reply_msg.text,
+            "message_obj": reply_msg,  # Store full message object to preserve formatting
             "step": "group_selection",
             "selected_groups": [],
             "message_id": f"{int(time.time())}_{hash(reply_msg.text) % 10000}"
@@ -188,13 +214,12 @@ class ForwardHandler(BaseHandler):
             elif minutes > 1440:
                 raise ValueError("Interval cannot be more than 24 hours (1440 minutes)")
             
-            forward_data = self.pending_forwards[user_id]
-            # Update intervals for selected groups
-            for group_id in forward_data["selected_groups"]:
-                self.groups_collection.update_one(
-                    {"user_id": user_id, "group_id": int(group_id)},
-                    {"$set": {"interval": minutes * 60}}
-                )
+            # Store interval in pending forward data
+            self.pending_forwards[user_id]["interval"] = minutes * 60
+
+            # Get batch information
+            total_groups = len(self.pending_forwards[user_id]["selected_groups"])
+            batch_info = self.get_batch_info(total_groups)
 
             # Start forwarding
             keyboard = [
@@ -202,7 +227,9 @@ class ForwardHandler(BaseHandler):
                 [Button.inline("📤 Forward Another", data="forward_new")]
             ]
             success_msg = (
-                f"✅ Message scheduled for forwarding every {minutes} minutes!\n"
+                f"✅ Message scheduled for forwarding every {minutes} minutes!\n\n"
+                f"📊 **Batch Sending Info:**\n"
+                f"{batch_info}\n\n"
                 "Use /status to monitor forwarding progress."
             )
 
@@ -214,7 +241,7 @@ class ForwardHandler(BaseHandler):
                     await event.reply(success_msg, buttons=keyboard)
 
             # Initialize forwarding
-            await self.start_forwarding(user_id, forward_data, minutes)
+            await self.start_forwarding(user_id, self.pending_forwards[user_id])
 
         except ValueError as e:
             error_msg = str(e) or "Please send a valid number of minutes (minimum 1)"
@@ -242,7 +269,15 @@ class ForwardHandler(BaseHandler):
                 
             index = data.replace("stop_", "")
             if index == "all":
-                # Stop all forwards
+                # Stop all forwards for this user
+                if user_id in self.forwarding_tasks:
+                    # Cancel all individual message tasks
+                    for message_id, task in self.forwarding_tasks[user_id].items():
+                        task.cancel()
+                        logger.info(f"Cancelled task for message {message_id} of user {user_id}")
+                    del self.forwarding_tasks[user_id]
+                
+                # Clear messages list
                 self.messages_to_forward[user_id] = []
                 keyboard = [[Button.inline("📤 New Forward", data="forward_new")]]
                 await event.edit("✅ Stopped all forwards.", buttons=keyboard)
@@ -251,7 +286,23 @@ class ForwardHandler(BaseHandler):
                 try:
                     idx = int(index)
                     if 0 <= idx < len(self.messages_to_forward[user_id]):
+                        # Get the message to stop
+                        message_to_stop = self.messages_to_forward[user_id][idx]
+                        message_id = message_to_stop["message_id"]
+                        
+                        # Cancel the specific task
+                        if user_id in self.forwarding_tasks and message_id in self.forwarding_tasks[user_id]:
+                            self.forwarding_tasks[user_id][message_id].cancel()
+                            del self.forwarding_tasks[user_id][message_id]
+                            logger.info(f"Cancelled task for message {message_id} of user {user_id}")
+                            
+                            # If no more tasks for this user, cleanup the user entry
+                            if not self.forwarding_tasks[user_id]:
+                                del self.forwarding_tasks[user_id]
+                        
+                        # Remove from messages list
                         del self.messages_to_forward[user_id][idx]
+                        
                         keyboard = [[Button.inline("📤 New Forward", data="forward_new")]]
                         await event.edit("✅ Forward stopped successfully.", buttons=keyboard)
                 except (ValueError, IndexError):
@@ -350,15 +401,23 @@ class ForwardHandler(BaseHandler):
                 )
             else:
                 minutes = int(interval)
-                await self.start_forwarding(user_id, forward_data, minutes)
+                forward_data["interval"] = minutes * 60
                 
-                # Show success message
+                # Get batch information
+                total_groups = len(forward_data["selected_groups"])
+                batch_info = self.get_batch_info(total_groups)
+                
+                await self.start_forwarding(user_id, forward_data)
+                
+                # Show success message with batch information
                 keyboard = [
                     [Button.inline("📊 View Status", data="forward_status")],
                     [Button.inline("📤 Forward Another", data="forward_new")]
                 ]
                 success_msg = (
-                    f"✅ Message scheduled for forwarding every {minutes} minutes!\n"
+                    f"✅ Message scheduled for forwarding every {minutes} minutes!\n\n"
+                    f"📊 **Batch Sending Info:**\n"
+                    f"{batch_info}\n\n"
                     "Use /status to monitor forwarding progress."
                 )
                 await event.edit(success_msg, buttons=keyboard)
@@ -376,75 +435,218 @@ class ForwardHandler(BaseHandler):
             groups = await self.get_user_groups(user_id)
             await self.show_group_selection(event, user_id, groups)
 
-    async def start_forwarding(self, user_id: int, forward_data: dict, minutes: int):
-        """Start forwarding messages"""
+    async def start_forwarding(self, user_id: int, forward_data: dict):
+        """Start forwarding messages with per-message interval - each message gets its own task"""
         # Initialize user's messages list
         if user_id not in self.messages_to_forward:
             self.messages_to_forward[user_id] = []
 
-        # Add message to forwarding queue
-        self.messages_to_forward[user_id].append({
+        # Add message to forwarding queue with interval
+        message_entry = {
             "message": forward_data["message"],
+            "message_obj": forward_data.get("message_obj"),  # Store message object for formatting
             "target_groups": forward_data["selected_groups"],
-            "message_id": forward_data["message_id"]
-        })
-
-        # Update intervals
-        for group_id in forward_data["selected_groups"]:
-            self.groups_collection.update_one(
-                {"user_id": user_id, "group_id": int(group_id)},
-                {"$set": {"interval": minutes * 60}}
-            )
+            "message_id": forward_data["message_id"],
+            "interval": forward_data["interval"]
+        }
+        
+        self.messages_to_forward[user_id].append(message_entry)
 
         # Clear pending forward
         del self.pending_forwards[user_id]
 
-        # Start forwarding tasks
-        asyncio.create_task(self.schedule_forwards(user_id))
+        # Initialize forwarding tasks dict for user if needed
+        if user_id not in self.forwarding_tasks:
+            self.forwarding_tasks[user_id] = {}
+
+        # Create independent task for this specific message
+        message_id = forward_data["message_id"]
+        task = asyncio.create_task(self.schedule_message_forwards(user_id, message_id, message_entry))
+        self.forwarding_tasks[user_id][message_id] = task
+        
+        logger.info(f"Started independent forwarding task for message {message_id} of user {user_id}")
+
+        # Send the first forward immediately for instant gratification
+        await self.send_immediate_forward(user_id, message_entry)
 
     async def schedule_forwards(self, user_id: int):
-        """Schedule and manage message forwarding"""
-        while True:
-            try:
+        """Legacy method - now replaced by individual message tasks"""
+        # This method is kept for backward compatibility during initialization
+        # but actual forwarding now uses schedule_message_forwards for each message
+        logger.info(f"Legacy schedule_forwards called for user {user_id} - using new independent task system")
+
+    async def send_immediate_forward(self, user_id: int, message_data: dict):
+        """Send the first forward immediately when user sets up forwarding"""
+        try:
+            message_id = message_data["message_id"]
+            group_ids = message_data["target_groups"]
+            
+            logger.info(f"Sending immediate forward for message {message_id} to {len(group_ids)} groups")
+            
+            # Use batched sending to avoid rate limiting
+            successful, failed = await self.send_message_to_groups_batched(user_id, message_data, group_ids)
+            
+            if successful > 0:
+                logger.info(f"Immediate forward completed: {successful} successful, {failed} failed")
+            else:
+                logger.warning(f"Immediate forward failed for all {len(group_ids)} groups")
+                    
+        except Exception as e:
+            logger.error(f"Error in send_immediate_forward for user {user_id}: {e}")
+
+    async def schedule_message_forwards(self, user_id: int, message_id: str, message_data: dict):
+        """Schedule forwarding for a specific message - runs independently"""
+        try:
+            interval = message_data["interval"]
+            group_ids = message_data["target_groups"]
+            
+            while True:
+                # Check if message still exists in the user's forwarding list
                 if user_id not in self.messages_to_forward:
                     break
+                    
+                # Check if this specific message still exists
+                message_exists = any(
+                    msg["message_id"] == message_id 
+                    for msg in self.messages_to_forward[user_id]
+                )
+                if not message_exists:
+                    break
 
-                for message_data in self.messages_to_forward[user_id]:
-                    for group_id_str in message_data["target_groups"]:
-                        group_id = int(group_id_str)
-                        group = self.groups_collection.find_one({
-                            "user_id": user_id,
-                            "group_id": group_id
-                        })
+                # Wait for the interval
+                await asyncio.sleep(interval)
+                
+                logger.info(f"Scheduled forward time reached for message {message_id} of user {user_id}")
+                
+                # Use batched sending to avoid rate limiting
+                successful, failed = await self.send_message_to_groups_batched(user_id, message_data, group_ids)
+                
+                if successful > 0:
+                    logger.info(f"Scheduled forward completed for message {message_id}: {successful} successful, {failed} failed")
+                else:
+                    logger.warning(f"Scheduled forward failed for all groups for message {message_id}")
 
-                        if not group or "interval" not in group:
-                            continue
+        except asyncio.CancelledError:
+            logger.info(f"Forwarding task cancelled for user {user_id}, message {message_id}")
+        except Exception as e:
+            logger.error(f"Error in schedule_message_forwards for user {user_id}, message {message_id}: {e}")
+        finally:
+            # Cleanup task reference
+            if user_id in self.forwarding_tasks and message_id in self.forwarding_tasks[user_id]:
+                del self.forwarding_tasks[user_id][message_id]
+                # If no more tasks for this user, cleanup the user entry
+                if not self.forwarding_tasks[user_id]:
+                    del self.forwarding_tasks[user_id]
 
-                        last_time = self.last_forward_time.get(user_id, {}).get(
-                            group_id, {}).get(message_data["message_id"], 0)
+    async def send_message_to_groups_batched(self, user_id: int, message_data: dict, group_ids: list):
+        """Send message to groups in batches to avoid rate limiting"""
+        try:
+            client = self.user_clients.get(user_id)
+            if not client or not client.is_connected():
+                logger.warning(f"Client not available for batched sending for user {user_id}")
+                return
+            
+            message_id = message_data["message_id"]
+            total_groups = len(group_ids)
+            successful_sends = 0
+            failed_sends = 0
+            
+            logger.info(f"Starting batched send for message {message_id} to {total_groups} groups (batch size: {self.BATCH_SIZE})")
+            
+            # Process groups in batches
+            for i in range(0, total_groups, self.BATCH_SIZE):
+                batch = group_ids[i:i + self.BATCH_SIZE]
+                batch_number = (i // self.BATCH_SIZE) + 1
+                total_batches = (total_groups + self.BATCH_SIZE - 1) // self.BATCH_SIZE
+                
+                logger.info(f"Processing batch {batch_number}/{total_batches} ({len(batch)} groups) for user {user_id}")
+                
+                # Create tasks for concurrent sending within the batch
+                batch_tasks = []
+                for group_id_str in batch:
+                    group_id = int(group_id_str)
+                    
+                    # Check if group still exists
+                    group = self.groups_collection.find_one({
+                        "user_id": user_id,
+                        "group_id": group_id
+                    })
+                    if not group:
+                        logger.warning(f"Group {group_id} not found for user {user_id}, skipping")
+                        continue
+                    
+                    # Create task for sending to this group
+                    task = self.send_to_single_group(client, user_id, message_data, group_id)
+                    batch_tasks.append(task)
+                
+                # Execute batch tasks with limited concurrency
+                if batch_tasks:
+                    # Limit concurrent operations to avoid overwhelming the API
+                    semaphore = asyncio.Semaphore(self.MAX_CONCURRENT_SENDS)
+                    
+                    async def limited_send(task):
+                        async with semaphore:
+                            return await task
+                    
+                    # Execute batch with limited concurrency
+                    batch_results = await asyncio.gather(
+                        *[limited_send(task) for task in batch_tasks],
+                        return_exceptions=True
+                    )
+                    
+                    # Count results
+                    for result in batch_results:
+                        if isinstance(result, Exception):
+                            failed_sends += 1
+                            logger.error(f"Batch send error: {result}")
+                        elif result:
+                            successful_sends += 1
+                        else:
+                            failed_sends += 1
+                
+                # Wait between batches (except for the last batch)
+                if i + self.BATCH_SIZE < total_groups:
+                    logger.info(f"Waiting {self.BATCH_DELAY} seconds before next batch...")
+                    await asyncio.sleep(self.BATCH_DELAY)
+            
+            logger.info(f"Batched send completed for message {message_id}: {successful_sends} successful, {failed_sends} failed")
+            return successful_sends, failed_sends
+            
+        except Exception as e:
+            logger.error(f"Error in batched sending for user {user_id}: {e}")
+            return 0, len(group_ids)
 
-                        if time.time() - last_time >= group["interval"]:
-                            # Forward the message
-                            client = self.user_clients.get(user_id)
-                            if client:
-                                try:
-                                    await client.send_message(group_id, message_data["message"])
-                                    # Update last forward time
-                                    if user_id not in self.last_forward_time:
-                                        self.last_forward_time[user_id] = {}
-                                    if group_id not in self.last_forward_time[user_id]:
-                                        self.last_forward_time[user_id][group_id] = {}
-                                    self.last_forward_time[user_id][group_id][message_data["message_id"]] = time.time()
-                                except Exception as e:
-                                    logger.error(f"Error forwarding message: {e}")
-
-                await asyncio.sleep(60)  # Check every minute
-
-            except asyncio.CancelledError:
-                break
-            except Exception as e:
-                logger.error(f"Error in schedule_forwards: {e}")
-                await asyncio.sleep(60)
+    async def send_to_single_group(self, client, user_id: int, message_data: dict, group_id: int):
+        """Send message to a single group"""
+        try:
+            message_id = message_data["message_id"]
+            
+            # Use the original message object to preserve formatting
+            message_obj = message_data.get("message_obj")
+            if message_obj:
+                # Forward using the original message object which preserves all formatting
+                await client.send_message(
+                    group_id,
+                    message_obj.message,
+                    formatting_entities=message_obj.entities
+                )
+            else:
+                # Fallback to plain text if message object is not available
+                await client.send_message(group_id, message_data["message"])
+            
+            # Update last forward time
+            if user_id not in self.last_forward_time:
+                self.last_forward_time[user_id] = {}
+            if message_id not in self.last_forward_time[user_id]:
+                self.last_forward_time[user_id][message_id] = {}
+            self.last_forward_time[user_id][message_id][group_id] = time.time()
+            
+            logger.debug(f"Successfully sent message to group {group_id} for user {user_id}")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Error sending to group {group_id} for user {user_id}: {e}")
+            return False
 
     async def stop_forward_command(self, event):
         """Enhanced stop forward command handler"""
@@ -473,4 +675,19 @@ class ForwardHandler(BaseHandler):
         await event.reply(
             "Select which message to stop forwarding:",
             buttons=keyboard
+        )
+
+    def get_batch_info(self, total_groups: int) -> str:
+        """Get information about how batching will work for the given number of groups"""
+        if total_groups <= self.BATCH_SIZE:
+            return f"All {total_groups} groups will receive the message instantly."
+        
+        total_batches = (total_groups + self.BATCH_SIZE - 1) // self.BATCH_SIZE
+        total_time = (total_batches - 1) * self.BATCH_DELAY
+        
+        return (
+            f"Message will be sent to {total_groups} groups in {total_batches} batches:\n"
+            f"• {self.BATCH_SIZE} groups per batch\n"
+            f"• {self.BATCH_DELAY} second delay between batches\n"
+            f"• Total sending time: ~{total_time} seconds"
         )
