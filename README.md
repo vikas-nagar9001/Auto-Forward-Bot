@@ -7,7 +7,15 @@
 ✅ Bulk group operations and smart validation  
 ✅ Real-time monitoring and statistics  
 
-Start with `/register` to begin.
+## 🎯 Try Our Bot Live!
+
+**🤖 [Use Our Bot](https://t.me/Auto_msg_forward_botbot)** - Experience all features instantly!
+
+🔥 **See it in action** - No installation required  
+⚡ **Test all commands** - Try `/start`, `/help`, `/addgroup`  
+🚀 **Full functionality** - Complete working demo  
+
+Ready to deploy your own? Start with the setup below! 👇
 
 ## Features
 
